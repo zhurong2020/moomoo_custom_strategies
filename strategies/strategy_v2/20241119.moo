@@ -32,6 +32,7 @@ class Strategy(StrategyBase):
         self.lower_grid = None
         self.last_reset_time = None
         self.last_process_time = None
+        self.pending_buy_after_sell = False
 
     def _format_price(self, raw_price):
         if raw_price is None:
@@ -52,8 +53,15 @@ class Strategy(StrategyBase):
         self.last_reset_time = time_obj
         
         print(f"网格更新 - 上轨:{self.upper_grid} 基准:{self.base_price} 下轨:{self.lower_grid}")
-        self._print_position_summary()  # 修复：更新网格后实时打印持仓信息
         return True
+
+    def _check_execution_details(self, order_id):
+        execution_ids = order_executionid(order_id)
+        if execution_ids:
+            filled_qty = order_filled_qty(order_id)
+            exec_price = execution_price(execution_ids[-1])
+            return filled_qty, exec_price
+        return None, None
 
     def _check_order_status(self, order_id):
         status = order_status(order_id)
@@ -111,68 +119,88 @@ class Strategy(StrategyBase):
                     'create_time': device_time(TimeZone.ET),
                     'grids': profit_grids
                 }
+                self.pending_buy_after_sell = True
                 return True
         return False
 
     def _place_buy_order(self, curr_price):
-        total_position = sum(g['quantity'] for g in self.active_grids)
-        total_pending = sum(order['quantity'] for order in self.processing_orders.values() if order['type'] == 'buy')
-        
-        if total_position + total_pending >= self.max_position:
-            return False
+        if self.pending_buy_after_sell or \
+           (not any(info['type'] == 'buy' for info in self.processing_orders.values())):
+            total_position = sum(g['quantity'] for g in self.active_grids)
+            total_pending = sum(order['quantity'] for order in self.processing_orders.values() if order['type'] == 'buy')
             
-        if any(info['type'] == 'buy' for info in self.processing_orders.values()):
-            return False
+            if total_position + total_pending >= self.max_position:
+                return False
 
-        limit_price = self._format_price(curr_price)
-        order_id = place_limit(
-            symbol=self.stock,
-            price=limit_price,
-            qty=self.grid_size,
-            side=OrderSide.BUY,
-            time_in_force=TimeInForce.DAY
-        )
-        
-        if order_id:
-            print(f"创建买入订单 - 价格:{limit_price} 数量:{self.grid_size}")
-            self.processing_orders[order_id] = {
-                'type': 'buy',
-                'price': limit_price,
-                'quantity': self.grid_size,
-                'create_time': device_time(TimeZone.ET)
-            }
-            return True
+            limit_price = self._format_price(curr_price)
+            order_id = place_limit(
+                symbol=self.stock,
+                price=limit_price,
+                qty=self.grid_size,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY
+            )
+            
+            if order_id:
+                print(f"创建买入订单 - 价格:{limit_price} 数量:{self.grid_size}")
+                self.processing_orders[order_id] = {
+                    'type': 'buy',
+                    'price': limit_price,
+                    'quantity': self.grid_size,
+                    'create_time': device_time(TimeZone.ET)
+                }
+                return True
         return False
 
     def _process_executions(self):
         executed = False
+        sell_orders = []
+        curr_price = None
+        
+        # 先处理卖单
         for order_id in list(self.processing_orders.keys()):
-            status = self._check_order_status(order_id)
-            
-            if status is True:
-                order_info = self.processing_orders[order_id]
-                
-                if order_info['type'] == 'buy':
-                    self.active_grids.append({
-                        'price': order_info['price'],
-                        'quantity': order_info['quantity'],
-                        'time': device_time(TimeZone.ET),
-                        'order_id': order_id
-                    })
-                    print(f"买入订单成交 - 价格:{order_info['price']} 数量:{order_info['quantity']}")
-                    
-                elif order_info['type'] == 'sell':
-                    for grid in order_info['grids']:
-                        if grid in self.active_grids:
-                            self.active_grids.remove(grid)
-                    print(f"卖出订单成交 - 价格:{order_info['price']} 数量:{order_info['quantity']}")
-                    # 修复：卖出后尝试立即开仓
-                    self._update_grid(order_info['price'])
-                    self._place_buy_order(order_info['price'])
-                
+            order_info = self.processing_orders.get(order_id)
+            if order_info and order_info['type'] == 'sell':
+                status = self._check_order_status(order_id)
+                if status is True:
+                    filled_qty, exec_price = self._check_execution_details(order_id)
+                    if filled_qty and exec_price:
+                        curr_price = exec_price
+                        for grid in order_info['grids']:
+                            if grid in self.active_grids:
+                                self.active_grids.remove(grid)
+                        print(f"卖出订单成交 - 价格:{exec_price} 数量:{filled_qty}")
+                        # 立即更新网格并尝试开仓
+                        if self._update_grid(exec_price):
+                            self._place_buy_order(exec_price)
+                            self.pending_buy_after_sell = False
+                        sell_orders.append(order_id)
+                        executed = True
+        
+        # 删除已处理的卖单
+        for order_id in sell_orders:
+            if order_id in self.processing_orders:
                 del self.processing_orders[order_id]
-                executed = True
-                
+        
+        # 处理买单
+        for order_id in list(self.processing_orders.keys()):
+            order_info = self.processing_orders.get(order_id)
+            if order_info and order_info['type'] == 'buy':
+                status = self._check_order_status(order_id)
+                if status is True:
+                    filled_qty, exec_price = self._check_execution_details(order_id)
+                    if filled_qty and exec_price:
+                        curr_price = exec_price
+                        self.active_grids.append({
+                            'price': exec_price,
+                            'quantity': filled_qty,
+                            'time': device_time(TimeZone.ET),
+                            'order_id': order_id
+                        })
+                        print(f"买入订单成交 - 价格:{exec_price} 数量:{filled_qty}")
+                        del self.processing_orders[order_id]
+                        executed = True
+        
         if executed:
             self._print_position_summary()
             
@@ -204,12 +232,10 @@ class Strategy(StrategyBase):
         try:
             time_obj = device_time(TimeZone.ET)
             
-            from datetime import datetime, timedelta
-            current_minute = time_obj.replace(second=0, microsecond=0)
-            if self.last_process_time != current_minute:
-                self._process_executions()
-                self.last_process_time = current_minute
+            # 处理任何未完成的订单
+            self._process_executions()
             
+            # 交易时段检查
             if time_obj.hour < 9 or \
                (time_obj.hour == 9 and time_obj.minute < 30) or \
                time_obj.hour >= 16:
@@ -219,18 +245,21 @@ class Strategy(StrategyBase):
             if not curr_price:
                 return
             
+            # 检查新的盈利机会
             if self._check_grid_profit(curr_price):
-                self._process_executions()
                 return
             
-            if self._place_buy_order(curr_price):
-                self._process_executions()
-                return
-            
-            if self.base_price is None or \
+            # 检查是否需要网格重置和开仓
+            if self.pending_buy_after_sell or \
+               (self.base_price is None or \
                curr_price > self.upper_grid or \
-               curr_price < self.lower_grid:
-                self._update_grid(curr_price)
+               curr_price < self.lower_grid):
+                if self._update_grid(curr_price):
+                    self._place_buy_order(curr_price)
+                return
+            
+            # 常规开仓检查
+            if self._place_buy_order(curr_price):
                 return
                 
         except Exception as e:
