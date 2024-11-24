@@ -61,9 +61,9 @@ class Strategy(StrategyBase):
             # 用户可配置参数
             self.initial_capital = show_variable(10000, GlobalType.FLOAT, "初始资金")
             self.max_total_position = show_variable(500, GlobalType.INT, "最大总持仓")
-            self.min_order_quantity = show_variable(50, GlobalType.INT, "单次交易数量")
-            self.position_limit = show_variable(150, GlobalType.INT, "单个网格持仓上限")
-            self.time_interval = show_variable(15, GlobalType.INT, "交易间隔(分钟)")
+            self.min_order_quantity = show_variable(20, GlobalType.INT, "单次交易数量")
+            self.position_limit = show_variable(80, GlobalType.INT, "单个网格持仓上限")
+            self.time_interval = show_variable(60, GlobalType.INT, "交易间隔(分钟)")
             
             # 统一网格间距和盈利标准，使用较大的间距
             self.grid_percentage = show_variable(0.03, GlobalType.FLOAT, "网格间距/盈利标准")
