@@ -282,36 +282,9 @@ class Strategy(StrategyBase):
             print(f"当前实际持仓: {actual_position}股")
             
             with self._position_lock:
-                if not self.is_initialized and actual_position > 0:
-                    # === 修改开始：优先使用成交记录恢复 ===
-                    print("检测到未初始化的持仓，进行恢复")
-                    positions_from_trades = self._get_positions_from_trades()
-                    if positions_from_trades:
-                        print("从成交记录中恢复持仓分布")
-                        self.grid_prices = [p for p in positions_from_trades['positions'].keys()]
-                        self.positions = positions_from_trades['positions']
-                        self.position_records = positions_from_trades['records']
-                        self.total_position = positions_from_trades['total']
-                        if self._verify_positions():
-                            self.is_initialized = True
-                            print("持仓恢复成功")
-                            return
-                    # === 修改结束 ===
-                    
-                    if not self._recover_positions():
-                        print("持仓恢复失败，中止网格初始化")
-                        return
-                    return
-                
-                if self.total_position != actual_position:
-                    print("检测到持仓不一致，先进行修正")
-                    if not self._verify_and_fix_positions():
-                        print("持仓修正失败，中止网格初始化")
-                        return
-                
                 # 保存原有持仓信息用于迁移
                 old_positions = {k: v for k, v in self.positions.items() if v > 0}
-                old_records = {k: v for k, v in self.position_records.items() 
+                old_records = {k: v.copy() for k, v in self.position_records.items() 
                             if v.get('quantity', 0) > 0}
                 
                 # 生成新网格价格
@@ -327,34 +300,39 @@ class Strategy(StrategyBase):
                     new_grid_prices.extend([up_price, down_price])
                 new_grid_prices.sort()
                 
-                # 初始化新网格，保持原有持仓信息
-                new_positions = {price: 0 for price in new_grid_prices}
-                new_records = {price: {'buy_price': 0, 'quantity': 0, 'update_time': 0} 
-                            for price in new_grid_prices}
+                # 初始化新网格
+                new_positions = {}  # 只保存有持仓的网格
+                new_records = {}    # 只保存有持仓的网格记录
                 
-                # 如果有原有持仓，尝试从成交记录重新分配
+                # 如果有原有持仓，先检查是否有需要平仓的位置
                 if old_positions:
-                    positions_from_trades = self._get_positions_from_trades()
-                    if positions_from_trades:
-                        # 将成交记录的持仓映射到新网格
-                        for old_price, old_qty in positions_from_trades['positions'].items():
-                            if old_qty <= 0:
-                                continue
-                            # 找到最近的新网格
-                            nearest_new_grid = self._find_nearest_grid(old_price)
-                            if nearest_new_grid:
-                                record = positions_from_trades['records'][old_price]
-                                new_positions[nearest_new_grid] = old_qty
-                                new_records[nearest_new_grid] = record
-                                print(f"迁移持仓 {old_qty}股 从 {old_price} 到网格 {nearest_new_grid}")
-                    else:
-                        # 如果无法从成交记录恢复，使用原有方式迁移
-                        for old_price, old_qty in old_positions.items():
-                            nearest_new_grid = self._find_nearest_grid(old_price)
-                            if nearest_new_grid:
-                                new_positions[nearest_new_grid] = old_qty
-                                new_records[nearest_new_grid] = old_records[old_price]
-                                print(f"迁移持仓 {old_qty}股 到网格 {nearest_new_grid}")
+                    sell_price = bid(self.stock, level=1) or base_price
+                    for old_price, qty in old_positions.items():
+                        record = old_records[old_price]
+                        buy_price = record.get('buy_price', old_price)
+                        price_diff = (sell_price - buy_price) / buy_price
+                        
+                        if price_diff >= self.grid_percentage:
+                            # 满足盈利条件，应该平仓
+                            print(f"网格重置时发现盈利机会: 网格={old_price:.1f} 盈利={price_diff:.1%}")
+                            if self._check_and_execute_sell(base_price):
+                                print("盈利平仓成功，继续初始化网格")
+                                # 更新实际持仓
+                                actual_position = position_holding_qty(self.stock)
+                                old_positions = {k: v for k, v in self.positions.items() if v > 0}
+                                old_records = {k: v.copy() for k, v in self.position_records.items() 
+                                            if v.get('quantity', 0) > 0}
+                        
+                # 迁移剩余持仓到新网格
+                for old_price, qty in old_positions.items():
+                    if qty <= 0:
+                        continue
+                    nearest_new_grid = self._find_nearest_grid(old_price)
+                    if nearest_new_grid:
+                        new_positions[nearest_new_grid] = qty
+                        new_records[nearest_new_grid] = old_records[old_price]
+                        print(f"迁移持仓 {qty}股 到网格 {nearest_new_grid}")
+                
                 # 更新网格信息
                 self.grid_prices = new_grid_prices
                 self.positions = new_positions
@@ -369,6 +347,13 @@ class Strategy(StrategyBase):
                         return
                 
                 self._print_grid_status(show_all=True, show_time=False)
+                
+                # 检查是否有开仓机会
+                if actual_position < self.max_total_position:
+                    current_grid = self._find_nearest_grid(base_price)
+                    if current_grid and current_grid not in self.positions:
+                        print(f"网格重置后检查到开仓机会: {current_grid:.1f}")
+                        self._place_buy_order(current_grid, base_price)
                 
         except Exception as e:
             print(f"初始化网格时发生错误: {str(e)}")
@@ -667,19 +652,22 @@ class Strategy(StrategyBase):
             cleared_positions = []  # 记录清仓的网格
             
             with self._position_lock:
-                for grid_price, position in sorted(self.positions.items()):
+                # 按照持仓成本从低到高排序，优先平掉低位的获利仓位
+                position_items = sorted(
+                    [(grid_price, qty, self.position_records.get(grid_price, {}).get('buy_price', 0)) 
+                    for grid_price, qty in self.positions.items() if qty > 0],
+                    key=lambda x: x[2]  # 按买入价格排序
+                )
+                
+                for grid_price, position, buy_price in position_items:
                     if position <= 0:
                         continue
                         
-                    record = self.position_records.get(grid_price)
-                    if not record or 'buy_price' not in record:
-                        continue
-                        
-                    price_diff = (sell_price - record['buy_price']) / record['buy_price']
+                    price_diff = (sell_price - buy_price) / buy_price
                     if price_diff >= self.grid_percentage:
-                        profitable_grids.append((grid_price, position, record['buy_price']))
+                        profitable_grids.append((grid_price, position, buy_price))
                         total_sell_quantity += position
-                        print(f"网格 {grid_price:.1f} 符合盈利条件: 成本={record['buy_price']:.1f}, 盈利={price_diff:.1%}")
+                        print(f"网格 {grid_price:.1f} 符合盈利条件: 成本={buy_price:.1f}, 盈利={price_diff:.1%}")
                 
                 if not profitable_grids:
                     return False
@@ -717,16 +705,20 @@ class Strategy(StrategyBase):
                                     print(f"网格 {grid_price:.1f} 清仓数据更新失败")
                                 else:
                                     print(f"网格 {grid_price:.1f} 清仓完成")
+                                    # 确保完全删除已清仓的网格记录
+                                    if grid_price in self.positions and self.positions[grid_price] == 0:
+                                        del self.positions[grid_price]
                                     cleared_positions.append(grid_price)
                             
                             if success:
                                 self._update_period_trade_status(None, is_buy=False)
-                                # 对于每个完全清仓的网格，在新的价位开仓
-                                if cleared_positions:
-                                    current_grid = self._find_nearest_grid(current_price)
-                                    if current_grid and current_grid not in self.positions:
-                                        print(f"清仓后在新网格 {current_grid:.1f} 开启新仓位")
-                                        return self._place_buy_order(current_grid, current_price)
+                                # 立即尝试在新的价位开仓
+                                current_grid = self._find_nearest_grid(current_price)
+                                if current_grid:
+                                    print(f"尝试在新网格 {current_grid:.1f} 开启新仓位")
+                                    if self._place_buy_order(current_grid, current_price):
+                                        print(f"新网格 {current_grid:.1f} 开仓成功")
+                                        return True
                             return success
                         else:
                             print("批量卖出订单执行失败")
@@ -834,19 +826,20 @@ class Strategy(StrategyBase):
                     if grid_price in self.positions:
                         current_pos = self.positions[grid_price]
                         if current_pos >= qty:
-                            self.positions[grid_price] = current_pos - qty
-                            if self.positions[grid_price] == 0:
-                                self.positions.pop(grid_price)
+                            new_qty = current_pos - qty
+                            if new_qty == 0:
+                                # 完全清仓，删除网格记录
+                                del self.positions[grid_price]
                                 self.position_records[grid_price] = {
                                     'buy_price': 0,
                                     'quantity': 0,
                                     'update_time': time.time()
                                 }
                             else:
-                                # 保持原有成本价
-                                original_record = self.position_records.get(grid_price, {})
+                                # 部分清仓，保持原有成本价
+                                self.positions[grid_price] = new_qty
                                 self.position_records[grid_price].update({
-                                    'quantity': self.positions[grid_price],
+                                    'quantity': new_qty,
                                     'update_time': time.time()
                                 })
                 
