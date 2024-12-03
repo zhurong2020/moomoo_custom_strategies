@@ -1,5 +1,5 @@
 class Strategy(StrategyBase):
-    """网格交易策略V4 - 修订持仓同步问题"""
+    """网格交易策略V5 - 修订持仓成本统计和盈利计算问题"""
 
     def initialize(self):
         """初始化策略"""
@@ -415,8 +415,16 @@ class Strategy(StrategyBase):
             )
             
             if not sell_order_id:
+                print("批量卖出订单创建失败")
                 return False
                 
+            # 记录订单信息
+            self.order_records[sell_order_id] = {
+                'side': OrderSide.SELL,
+                'grid_prices': [g[0] for g in profitable_grids],
+                'qty': total_quantity
+            }
+            
             self.pending_orders.add(sell_order_id)
             
             try:
@@ -426,14 +434,28 @@ class Strategy(StrategyBase):
                     for grid_price, qty, _ in profitable_grids:
                         updates.append((grid_price, qty, False, current_price))
                     
+                    # 执行批量更新
                     if self._batch_update_positions(updates):
                         self._update_period_trade_status(None, is_buy=False)
+                        # 立即尝试在新的价位开仓
+                        current_grid = self._find_nearest_grid(current_price)
+                        if current_grid:
+                            print(f"尝试在新网格 {current_grid:.1f} 开启新仓位")
+                            if self._place_buy_order(current_grid, current_price):
+                                print(f"新网格 {current_grid:.1f} 开仓成功")
                         return True
+                    else:
+                        print("持仓更新失败")
+                        return False
+                else:
+                    print("批量卖出订单执行失败")
+                    return False
+                    
             finally:
                 self.pending_orders.discard(sell_order_id)
                 
             return False
-            
+                
         except Exception as e:
             print(f"执行批量卖出操作失败: {str(e)}")
             return False
@@ -829,6 +851,7 @@ class Strategy(StrategyBase):
                     if position <= 0:
                         continue
                         
+                    # 使用实际成本价计算盈利比例
                     price_diff = (sell_price - buy_price) / buy_price
                     if price_diff >= self.grid_percentage:
                         profitable_grids.append((grid_price, position, buy_price))
@@ -840,55 +863,8 @@ class Strategy(StrategyBase):
 
                 # 执行批量卖出
                 if total_sell_quantity > 0:
-                    try:
-                        print(f"执行批量卖出: 总数量={total_sell_quantity}")
-                        sell_order_id = place_market(
-                            symbol=self.stock,
-                            qty=total_sell_quantity,
-                            side=OrderSide.SELL,
-                            time_in_force=TimeInForce.DAY
-                        )
+                    return self._execute_batch_sell(profitable_grids, current_price)
                         
-                        if not sell_order_id:
-                            print("批量卖出订单创建失败")
-                            return False
-                        
-                        # 记录订单信息
-                        self.order_records[sell_order_id] = {
-                            'side': OrderSide.SELL,
-                            'grid_prices': [g[0] for g in profitable_grids],
-                            'qty': total_sell_quantity
-                        }
-                        
-                        self.pending_orders.add(sell_order_id)
-                        
-                        if self._check_order_status(sell_order_id):
-                            # 构建批量更新数据
-                            updates = []
-                            for grid_price, qty, _ in profitable_grids:
-                                updates.append((grid_price, qty, False, sell_price))
-                            
-                            # 执行批量更新
-                            if self._batch_update_positions(updates):
-                                self._update_period_trade_status(None, is_buy=False)
-                                # 立即尝试在新的价位开仓
-                                current_grid = self._find_nearest_grid(current_price)
-                                if current_grid:
-                                    print(f"尝试在新网格 {current_grid:.1f} 开启新仓位")
-                                    if self._place_buy_order(current_grid, current_price):
-                                        print(f"新网格 {current_grid:.1f} 开仓成功")
-                                        return True
-                                return True
-                            else:
-                                print("持仓更新失败")
-                                return False
-                        else:
-                            print("批量卖出订单执行失败")
-                            return False
-                            
-                    finally:
-                        self.pending_orders.discard(sell_order_id)
-                
                 return False
                     
         except Exception as e:
@@ -957,15 +933,16 @@ class Strategy(StrategyBase):
             return False
 
     def _update_position(self, grid_price, qty, price, is_buy=True):
-        """更新持仓信息"""
+        """更新持仓信息，使用加权平均计算成本"""
         try:
             with self._position_lock:
-                before_total = self.total_position  # 包含高位网格持仓
+                before_total = self.total_position
                 grid_price = int(grid_price * 10) / 10
                 price = int(price * 10) / 10
                 
                 if is_buy:
                     current_pos = self.positions.get(grid_price, 0)
+                    current_cost = self.position_records.get(grid_price, {}).get('buy_price', 0)
                     new_qty = current_pos + qty
                     
                     # 验证单网格持仓限制
@@ -973,15 +950,21 @@ class Strategy(StrategyBase):
                         print(f"警告：网格{grid_price:.1f}更新后持仓{new_qty}将超过限制{self.position_limit}")
                         return False
                         
-                    # 验证总持仓限制(包含高位网格)
+                    # 验证总持仓限制
                     total_high_position = sum(self.high_positions.values())
                     if before_total + qty > self.max_total_position:
                         print(f"警告：更新后总持仓{before_total + qty}将超过限制{self.max_total_position}")
                         return False
                     
+                    # 计算加权平均成本
+                    if current_pos > 0:
+                        new_cost = (current_pos * current_cost + qty * price) / new_qty
+                    else:
+                        new_cost = price
+                        
                     self.positions[grid_price] = new_qty
                     self.position_records[grid_price] = {
-                        'buy_price': price,
+                        'buy_price': new_cost,
                         'quantity': new_qty,
                         'update_time': time.time()
                     }
@@ -991,7 +974,6 @@ class Strategy(StrategyBase):
                         if current_pos >= qty:
                             new_qty = current_pos - qty
                             if new_qty == 0:
-                                # 完全清仓，删除网格记录
                                 del self.positions[grid_price]
                                 self.position_records[grid_price] = {
                                     'buy_price': 0,
@@ -999,20 +981,20 @@ class Strategy(StrategyBase):
                                     'update_time': time.time()
                                 }
                             else:
-                                # 部分清仓，保持原有成本价
+                                # 保持原有成本价
                                 self.positions[grid_price] = new_qty
                                 self.position_records[grid_price].update({
                                     'quantity': new_qty,
                                     'update_time': time.time()
                                 })
                 
-                # 计算新的总持仓,包含高位网格
+                # 更新总持仓
                 self.total_position = sum(self.positions.values()) + sum(self.high_positions.values())
                 print(f"持仓更新 - 网格:{grid_price:.1f} 操作:{'买入' if is_buy else '卖出'} "
                     f"数量:{qty} 价格:{price:.1f} 总持仓:{self.total_position}")
                 self._print_grid_status(show_all=False, show_time=True)
                 return self._verify_positions()
-                    
+                        
         except Exception as e:
             print(f"更新持仓失败: {str(e)}")
             return False
