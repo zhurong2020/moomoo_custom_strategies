@@ -1,0 +1,1255 @@
+class Strategy(StrategyBase):
+    """网格交易策略V6 - 重构后的优化版本"""
+    
+    def initialize(self):
+        """初始化策略"""
+        try:
+            # 初始化基本数据结构
+            self.grid_prices = []        # 存储网格价格
+            self.positions = {}          # 记录所有网格的持仓 (包含普通网格和高位网格)
+            self.position_records = {}   # 记录所有网格的交易详情
+            self.total_position = 0      # 总持仓跟踪
+           
+            self.is_initialized = False
+            self.last_trade_time = None  # 上次交易时间记录
+            self.pending_orders = set()  # 跟踪待处理订单
+            self.order_records = {}      # 记录本策略的所有订单信息
+            
+            # 记录当前周期的交易状态
+            self.current_period_trades = {
+                'period': '',        # 当前周期标识
+                'buy_count': 0,      # 买入次数
+                'sell_count': 0,     # 卖出次数
+                'grids': set()       # 已操作的网格
+            }
+
+            # 执行标准初始化流程
+            print("开始执行标准初始化流程...")
+            self.trigger_symbols()
+            self.custom_indicator()
+            self.global_variables()
+            print("标准初始化完成")
+            
+            # 检查是否有未处理的持仓
+            actual_position = self._get_position_qty(self.stock)
+            if actual_position > 0:
+                print(f"检测到已有持仓{actual_position}股，尝试恢复持仓状态")
+                if self._recover_positions():
+                    print("持仓状态恢复成功，继续执行策略")
+                else:
+                    print("持仓状态恢复失败，停止策略")
+                    return
+
+            print("策略初始化完成")
+            self.is_initialized = True
+            
+        except Exception as e:
+            print(f"策略初始化发生错误: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+
+    def trigger_symbols(self):
+        """定义交易标的"""
+        try:
+            self.stock = declare_trig_symbol()
+            print("交易标的设置完成")
+        except Exception as e:
+            print(f"设置交易标的时发生错误: {str(e)}")
+
+    def custom_indicator(self):
+        """设置技术指标"""
+        try:
+            self.register_indicator(
+                indicator_name='MA',
+                script='MA5:MA(CLOSE,5),COLORFF8D1E;',
+                param_list=[]
+            )
+            print("技术指标设置完成")
+        except Exception as e:
+            print(f"设置技术指标时发生错误: {str(e)}")
+
+    def global_variables(self):
+        """定义全局变量"""
+        try:
+            # 移除 initial_capital 和 time_interval
+            # 保留必要的用户配置参数
+            self.max_total_position = show_variable(500, GlobalType.INT, "最大总持仓")
+            self.min_order_quantity = show_variable(20, GlobalType.INT, "单次交易数量")
+            self.position_limit = show_variable(80, GlobalType.INT, "单个网格持仓上限")
+            self.grid_percentage = show_variable(0.03, GlobalType.FLOAT, "网格间距/盈利标准")
+            self.grid_num = show_variable(10, GlobalType.INT, "网格数量")
+            self.max_capital_usage = show_variable(0.9, GlobalType.FLOAT, "最大资金使用率")
+            self.max_order_timeout = show_variable(300, GlobalType.INT, "订单超时时间(秒)")
+            self.use_trade_records = show_variable(True, GlobalType.BOOL, "使用成交记录恢复持仓")
+            self.trade_record_days = show_variable(31, GlobalType.INT, "成交记录查询天数(1-31)")
+            self.position_sync_retry = show_variable(3, GlobalType.INT, "持仓同步重试次数")
+            
+            print("全局变量设置完成")
+                
+        except Exception as e:
+            print(f"设置全局变量时发生错误: {str(e)}")
+
+    def _get_position_qty(self, symbol):
+        """获取持仓数量,带标准错误处理"""
+        try:
+            return position_holding_qty(symbol)
+        except APIException as ex:
+            if ex.err_code == ErrCode.NoDataAvailable:
+                print("无持仓数据")
+                return 0
+            else:
+                print(f"获取持仓失败: {str(ex)}")
+                return 0
+        except Exception as e:
+            print(f"获取持仓时发生未知错误: {str(e)}")
+            return 0
+
+    def _get_latest_price(self, symbol):
+        """获取最新价格,带标准错误处理"""
+        try:
+            price = current_price(symbol)
+            return price
+        except APIException as ex:
+            if ex.err_code == ErrCode.ExceedReqLimit:
+                print("请求过于频繁，触发频率限制")
+            elif ex.err_code == ErrCode.ReqTimeout:
+                print("获取价格超时")
+            elif ex.err_code == ErrCode.NoQuoteRight:
+                print("行情权限不足")
+            elif ex.err_code == ErrCode.NoDataAvailable:
+                print("无可用数据")
+            else:
+                print(f"获取价格失败: {str(ex)}")
+            return None
+        except Exception as e:
+            print(f"获取价格时发生未知错误: {str(e)}")
+            return None
+
+    def handle_data(self):
+        """主要策略逻辑"""
+        try:
+            # 获取当前时间和价格
+            current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+            latest_price = self._get_latest_price(self.stock)
+            if not latest_price:
+                return
+                    
+            print(f"\n当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"当前价格: {latest_price:.1f}")
+            
+            # 检查是否新周期
+            if not self._is_new_period(current_time):
+                print(f"当前周期已执行交易, 等待下一周期")
+                return
+                
+            # 检查网格状态和交易机会
+            if not self.is_initialized or self._should_reset_grid(latest_price):
+                self._initialize_grids(latest_price)
+                return
+                
+            # 检查是否有交易机会
+            if self._check_trading_opportunity(latest_price):
+                self.last_trade_time = current_time
+                
+        except Exception as e:
+            print(f"策略运行时发生错误: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+
+    def _check_trading_opportunity(self, current_price):
+        """统一检查交易机会"""
+        try:
+            # 获取实时卖出价格
+            sell_price = bid(self.stock, level=1) or current_price
+                
+            # 先检查是否有盈利机会
+            profitable_grids = []
+            for grid_price, pos in sorted(self.positions.items()):
+                if pos <= 0:
+                    continue
+                    
+                record = self.position_records[grid_price]
+                buy_price = record['buy_price']
+                # 使用实时买价计算盈利
+                price_diff = (sell_price - buy_price) / buy_price
+                
+                if price_diff >= self.grid_percentage:
+                    print(f"网格 {grid_price:.1f} 符合盈利条件: 成本={buy_price:.2f}, 盈利={price_diff:.1%}")
+                    profitable_grids.append((grid_price, pos, buy_price))
+            
+            # 执行批量卖出
+            did_sell = False
+            if profitable_grids and self._can_trade_in_period(is_buy=False):
+                did_sell = self._execute_batch_sell(profitable_grids, current_price)
+                self._print_grid_status(show_all=False)  # 打印更新后状态
+                
+            # 检查是否可以买入
+            if (did_sell or self._can_trade_in_period(is_buy=True)) and self.total_position < self.max_total_position:
+                current_grid = self._find_nearest_grid(current_price)
+                if current_grid and self._should_execute_trade(current_grid, current_price):
+                    print(f"尝试在网格 {current_grid:.1f} 开启新仓位")
+                    if self._place_buy_order(current_grid, current_price):
+                        print(f"网格 {current_grid:.1f} 开仓成功")
+                        self._print_grid_status(show_all=False)  # 打印更新后状态
+                        return True
+                        
+            return did_sell
+                
+        except Exception as e:
+            print(f"检查交易机会时发生错误: {str(e)}")
+            return False
+
+    def _can_trade_in_period(self, is_buy=True):
+        """检查是否可以在当前周期交易"""
+        if is_buy and self.current_period_trades['buy_count'] > 0:
+            print(f"当前周期已执行过买入操作")
+            return False
+        if not is_buy and self.current_period_trades['sell_count'] > 0:
+            print(f"当前周期已执行过卖出操作")
+            return False
+        return True
+
+    def _is_new_period(self, current_time):
+        """判断是否是新的交易周期"""
+        current_period = current_time.strftime('%Y%m%d_%H%M')
+        if current_period != self.current_period_trades['period']:
+            self.current_period_trades = {
+                'period': current_period,
+                'buy_count': 0,
+                'sell_count': 0,
+                'grids': set()
+            }
+            return True
+        return False
+
+    def _update_period_trade_status(self, is_buy=True):
+        """更新周期交易状态"""
+        if is_buy:
+            self.current_period_trades['buy_count'] += 1
+        else:
+            self.current_period_trades['sell_count'] += 1
+
+    def _execute_batch_sell(self, profitable_grids, current_price):
+        """执行批量卖出操作"""
+        try:
+            if not profitable_grids:
+                return False
+                
+            # 记录卖出前的状态
+            pre_sell_position = self._get_position_qty(self.stock)
+            total_quantity = sum(grid[1] for grid in profitable_grids)
+            
+            # 获取实时卖出价格
+            sell_price = bid(self.stock, level=1) or current_price
+                
+            print(f"执行批量卖出: 总数量={total_quantity}")
+            sell_order_id = place_market(
+                symbol=self.stock,
+                qty=total_quantity,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY
+            )
+            
+            if not sell_order_id:
+                print("批量卖出订单创建失败")
+                return False
+                
+            self.order_records[sell_order_id] = {
+                'side': OrderSide.SELL,
+                'grid_prices': [g[0] for g in profitable_grids],
+                'qty': total_quantity
+            }
+            self.pending_orders.add(sell_order_id)
+            
+            try:
+                if self._check_order_status(sell_order_id):
+                    # 立即验证卖出结果
+                    post_sell_position = self._get_position_qty(self.stock)
+                    if post_sell_position == 0:
+                        # 如果完全卖空，直接清空记录
+                        self.positions.clear()
+                        self.position_records.clear()
+                        self.total_position = 0
+                        print("检测到完全卖空，已清空所有持仓记录")
+                        return True
+                        
+                    expected_change = total_quantity
+                    if abs((pre_sell_position - post_sell_position) - expected_change) > 0.01:
+                        print(f"卖出后持仓变化异常: 预期{expected_change}, 实际{pre_sell_position - post_sell_position}")
+                        return False
+                        
+                    exec_price = execution_price(sell_order_id)
+                    updates = []
+                    for grid_price, qty, _ in profitable_grids:
+                        updates.append({
+                            'grid_price': grid_price,
+                            'qty': qty,
+                            'price': exec_price,
+                            'is_buy': False
+                        })
+                    
+                    # 尝试更新持仓
+                    retry_count = 0
+                    while retry_count < self.position_sync_retry:
+                        if self._batch_update_positions(updates):
+                            self._update_period_trade_status(is_buy=False)
+                            print("批量卖出成功")
+                            # 再次验证最终状态
+                            if not self._verify_positions():
+                                print("最终持仓验证失败")
+                                continue
+                            self._print_grid_status(show_all=False) # 显示更新后的状态
+                            return True
+                            
+                        print(f"持仓更新失败，尝试同步后重试 ({retry_count + 1})")
+                        # 使用实际成交价进行同步
+                        if self._force_sync_position(post_sell_position, exec_price):
+                            retry_count += 1
+                        else:
+                            break
+                    
+                    print("持仓更新失败次数达到上限")
+                    
+                return False
+                
+            finally:
+                self.pending_orders.discard(sell_order_id)
+                
+        except Exception as e:
+            if str(e):  # 只在有实际错误信息时打印
+                print(f"执行批量卖出时发生错误: {str(e)}")
+            return False
+
+    def _place_buy_order(self, grid_price, latest_price):
+        """执行买入订单"""
+        try:
+            # 检查网格和总持仓限制 (保持不变)
+            current_pos = self.positions.get(grid_price, 0)
+            if current_pos >= self.position_limit:
+                print(f"网格{grid_price:.1f}持仓{current_pos}已达上限{self.position_limit}")
+                return False
+                
+            if self.total_position >= self.max_total_position:
+                print(f"总持仓{self.total_position}已达上限{self.max_total_position}")
+                return False
+                
+            # 获取实时价格并执行买入
+            buy_price = ask(self.stock, level=1) or latest_price
+            print(f"执行买入: 网格={grid_price:.1f} 数量={self.min_order_quantity} @ {buy_price:.1f}")
+            
+            buy_order_id = place_market(
+                symbol=self.stock,
+                qty=self.min_order_quantity,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY
+            )
+            
+            if not buy_order_id:
+                print("买入订单创建失败")
+                return False
+
+            self.order_records[buy_order_id] = {
+                'side': OrderSide.BUY,
+                'grid_price': grid_price,
+                'qty': self.min_order_quantity
+            }
+            self.pending_orders.add(buy_order_id)
+            
+            try:
+                if self._check_order_status(buy_order_id):
+                    exec_price = execution_price(buy_order_id)
+                    updates = [{
+                        'grid_price': grid_price,
+                        'qty': self.min_order_quantity,
+                        'price': exec_price,
+                        'is_buy': True
+                    }]
+                    
+                    # 尝试更新持仓
+                    retry_count = 0
+                    while retry_count < self.position_sync_retry:
+                        if self._batch_update_positions(updates):
+                            self._update_period_trade_status(is_buy=True)
+                            print(f"网格 {grid_price:.1f} 买入成功")
+                            return True
+                            
+                        # 如果更新失败，尝试同步后重试
+                        print(f"持仓更新失败，尝试同步后重试 ({retry_count + 1})")
+                        actual_position = self._get_position_qty(self.stock)
+                        if self._force_sync_position(actual_position, exec_price):
+                            retry_count += 1
+                        else:
+                            break
+                            
+                    print("持仓更新失败次数达到上限")
+                return False
+                
+            finally:
+                self.pending_orders.discard(buy_order_id)
+                
+        except Exception as e:
+            if str(e):  # 只在有实际错误信息时打印
+                print(f"执行买入订单时发生错误: {str(e)}")
+            return False
+
+    def _check_order_status(self, order_id, max_retries=120, retry_interval=0.5):
+        """检查订单状态"""
+        if not order_id:
+            return False
+            
+        try:
+            start_time = time.time()
+            wait_count = 0
+            
+            while True:
+                status = order_status(order_id)
+                wait_count += 1
+                
+                if status == "FILLED_ALL":
+                    return True
+                    
+                if status in ["CANCELLED_ALL", "FAILED", "DISABLED", "DELETED"]:
+                    print(f"订单{order_id}已{status}")
+                    return False
+                    
+                # 检查是否达到最大等待时间
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= self.max_order_timeout:
+                    print(f"订单{order_id}等待超时({elapsed_time:.1f}秒),准备撤单")
+                    cancel_order_by_orderid(order_id)
+                    return False
+                    
+                # 如果订单未成交但状态正常，继续等待
+                if wait_count >= max_retries:
+                    print(f"订单{order_id}等待次数达到上限,准备撤单")
+                    cancel_order_by_orderid(order_id)
+                    return False
+                    
+                time.sleep(retry_interval)
+                
+        except Exception as e:
+            print(f"检查订单状态出错: {str(e)}")
+            return False
+
+    def _batch_update_positions(self, updates):
+        """批量更新持仓信息"""
+        try:
+            # 记录更新前的状态
+            old_positions = self.positions.copy()
+            old_records = {k: v.copy() for k, v in self.position_records.items()}
+            old_total = self.total_position
+            
+            # 执行所有更新
+            for update in updates:
+                try:
+                    grid_price = update['grid_price']
+                    qty = update['qty']
+                    price = update['price']
+                    is_buy = update['is_buy']
+                    
+                    if is_buy:
+                        # 买入更新
+                        current_pos = self.positions.get(grid_price, 0)
+                        current_cost = self.position_records.get(grid_price, {}).get('buy_price', 0)
+                        new_qty = current_pos + qty
+                        
+                        # 计算加权平均成本(保持1位小数)
+                        if current_pos > 0:
+                            total_value = current_pos * current_cost + qty * price
+                            new_cost = int(total_value / new_qty * 10) / 10
+                        else:
+                            new_cost = int(price * 10) / 10
+                        
+                        self.positions[grid_price] = new_qty
+                        self.position_records[grid_price] = {
+                            'buy_price': new_cost,
+                            'quantity': new_qty,
+                            'update_time': time.time()
+                        }
+                    else:
+                        # 卖出更新
+                        if grid_price in self.positions:
+                            current_pos = self.positions[grid_price]
+                            if current_pos <= qty:
+                                del self.positions[grid_price]
+                                self.position_records[grid_price] = {
+                                    'buy_price': 0,
+                                    'quantity': 0,
+                                    'update_time': time.time()
+                                }
+                            else:
+                                new_qty = current_pos - qty
+                                self.positions[grid_price] = new_qty
+                                self.position_records[grid_price].update({
+                                    'quantity': new_qty,
+                                    'update_time': time.time()
+                                })
+                    
+                    # 更新总持仓
+                    self.total_position = sum(qty for qty in self.positions.values() if qty > 0)
+                    
+                    # 每次更新后立即验证
+                    if not self._verify_positions():
+                        raise Exception("持仓验证失败")
+                        
+                except Exception as e:
+                    if str(e):  # 只在有实际错误信息时打印
+                        print(f"更新失败: {str(e)}")
+                    self.positions = old_positions
+                    self.position_records = old_records
+                    self.total_position = old_total
+                    return False
+                    
+            print(f"批量更新持仓成功 - 总持仓:{self.total_position}")
+            self._print_grid_status(show_all=False)
+            return True
+                
+        except Exception as e:
+            if str(e):  # 只在有实际错误信息时打印
+                print(f"批量更新持仓失败: {str(e)}")
+            return False
+
+    def _initialize_grids(self, base_price):
+        """初始化或重置网格"""
+        try:
+            print(f"\n初始化网格 - 基准价格: {base_price}")
+            
+            # 添加参数验证
+            if not base_price or base_price <= 0:
+                print("无效的基准价格")
+                return False
+
+            # 获取当前持仓
+            actual_position = self._get_position_qty(self.stock)
+                
+            # 如果有持仓，先检查是否有盈利机会
+            if actual_position > 0:
+                print("检查重置前的盈利机会")
+                if self._check_profit_before_reset(base_price):
+                    print("完成盈利了结，继续重置网格")
+                    actual_position = self._get_position_qty(self.stock)
+                        
+            # 生成新网格价格
+            grid_spacing = base_price * self.grid_percentage
+            half_grids = self.grid_num // 2
+            new_grid_prices = []
+            base_grid = int(base_price * 10) / 10
+            
+            for i in range(half_grids + 1):
+                if i == 0:
+                    new_grid_prices.append(base_grid)
+                else:
+                    up_price = int((base_grid + i * grid_spacing) * 10) / 10
+                    down_price = int((base_grid - i * grid_spacing) * 10) / 10
+                    new_grid_prices.extend([up_price, down_price])
+            new_grid_prices.sort()
+            
+            # 如果有持仓，执行网格迁移
+            if actual_position > 0:
+                if not self._migrate_positions(actual_position, new_grid_prices, base_price):
+                    print("持仓迁移失败")
+                    return False
+            else:
+                # 初始化空网格
+                self.grid_prices = new_grid_prices
+                self.positions = {}
+                self.position_records = {
+                    price: {'buy_price': 0, 'quantity': 0, 'update_time': time.time()}
+                    for price in new_grid_prices
+                }
+                self.total_position = 0
+                
+            print("\n网格初始化完成")
+            self._print_grid_status(show_all=True)
+            
+            # 检查是否可以在当前价格开始建仓
+            if actual_position < self.max_total_position:
+                current_grid = self._find_nearest_grid(base_price)
+                if current_grid and self._can_trade_in_period(is_buy=True):
+                    print(f"网格重置后开始建仓: {current_grid:.1f}")
+                    if self._place_buy_order(current_grid, base_price):
+                        print(f"首次建仓成功")
+                        
+            return True
+                
+        except Exception as e:
+            print(f"初始化网格时发生错误: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
+    def _check_reset_safety(self, current_price):
+        """检查是否可以安全重置网格"""
+        try:
+            # 获取所有持仓的成本信息
+            positions_info = []
+            for grid_price, qty in self.positions.items():
+                if qty <= 0:
+                    continue
+                    
+                record = self.position_records[grid_price]
+                buy_price = record['buy_price']
+                price_diff = (current_price - buy_price) / buy_price
+                positions_info.append((grid_price, qty, buy_price, price_diff))
+                
+            # 如果所有持仓都是盈利的，可以重置
+            if all(info[3] >= 0 for info in positions_info):
+                return True
+                
+            # 计算总亏损金额
+            total_loss = sum((info[2] - current_price) * info[1] 
+                            for info in positions_info if info[3] < 0)
+                            
+            # 如果亏损超过一定限度，不建议重置
+            max_allowed_loss = current_price * self.total_position * 0.02  # 2%作为示例
+            if total_loss > max_allowed_loss:
+                print(f"当前亏损({total_loss:.2f})超过允许限度({max_allowed_loss:.2f})")
+                return False
+                
+            return True
+                
+        except Exception as e:
+            print(f"检查网格重置安全性时发生错误: {str(e)}")
+            return False
+
+    def _verify_positions(self):
+        """验证持仓数据一致性"""
+        try:
+            actual_position = self._get_position_qty(self.stock)
+            calculated_position = sum(qty for qty in self.positions.values() if qty > 0)
+            
+            print(f"\n持仓验证:")
+            print(f"计算持仓: {calculated_position}股")
+            print(f"实际持仓: {actual_position}股")
+            
+            # 验证总持仓
+            if abs(calculated_position - actual_position) > 0.01:
+                print(f"持仓不一致 - 实际:{actual_position} != 记录:{calculated_position}")
+                return False
+                
+            # 验证网格限制和记录一致性
+            for grid_price, qty in self.positions.items():
+                if qty <= 0:
+                    continue
+                    
+                # 检查单网格限制
+                if qty > self.position_limit:
+                    print(f"网格{grid_price}超出持仓限制:{qty}>{self.position_limit}")
+                    return False
+                    
+                # 检查记录一致性
+                record = self.position_records.get(grid_price)
+                if not record:
+                    print(f"网格{grid_price}缺少持仓记录")
+                    return False
+                    
+                if record['quantity'] != qty:
+                    print(f"网格{grid_price}持仓记录不一致: {record['quantity']} != {qty}")
+                    return False
+                    
+                # 检查成本价有效性
+                if record['buy_price'] <= 0:
+                    print(f"网格{grid_price}成本价无效: {record['buy_price']}")
+                    return False
+                    
+            # 所有检查通过
+            self.total_position = calculated_position
+            return True
+                
+        except Exception as e:
+            print(f"验证持仓失败: {str(e)}")
+            return False
+
+    def _print_grid_status(self, show_all=True):
+        """打印网格状态"""
+        try:
+            print("\n=== 网格状态 ===")
+            latest_price = self._get_latest_price(self.stock)
+            printed_grids = set()  # 记录已打印的网格
+            
+            if show_all:
+                # 显示所有网格
+                all_grids = sorted(set(self.grid_prices + list(self.positions.keys())))
+                for grid in all_grids:
+                    if grid in printed_grids:
+                        continue
+                    printed_grids.add(grid)
+                    
+                    pos = self.positions.get(grid, 0)
+                    record = self.position_records.get(grid, {})
+                    status = f"网格 {grid:.1f}: 持仓={pos}"
+                    
+                    if pos > 0:
+                        buy_price = record.get('buy_price', 0)
+                        status += f", 成本={buy_price:.1f}"
+                        if latest_price:
+                            profit = (latest_price - buy_price) * pos
+                            profit_pct = (latest_price - buy_price) / buy_price * 100
+                            status += f", 盈亏={profit:.2f}({profit_pct:.1f}%)"
+                    print(status)
+            else:
+                # 只显示有持仓的网格
+                for grid, pos in sorted(self.positions.items()):
+                    if grid in printed_grids or pos <= 0:
+                        continue
+                    printed_grids.add(grid)
+                    
+                    record = self.position_records[grid]
+                    buy_price = record['buy_price']
+                    status = f"网格 {grid:.1f}: 持仓={pos}, 成本={buy_price:.1f}"
+                    if latest_price:
+                        profit = (latest_price - buy_price) * pos
+                        profit_pct = (latest_price - buy_price) / buy_price * 100
+                        status += f", 盈亏={profit:.2f}({profit_pct:.1f}%)"
+                    print(status)
+                
+            if latest_price:  # 删除 and self.total_position > 0 的条件
+                total_value = latest_price * self.total_position
+                print(f"\n总持仓: {self.total_position}, 总市值: {total_value:.2f}")
+            else:
+                print(f"\n总持仓: {self.total_position}")  # 确保始终显示总持仓
+                    
+        except Exception as e:
+            print(f"打印网格状态时发生错误: {str(e)}")
+
+    def _migrate_positions(self, actual_position, new_grid_prices, current_price):
+        """迁移持仓到新网格"""
+        try:
+            print("\n开始迁移持仓到新网格...")
+            # 先尝试从成交记录恢复
+            if self.use_trade_records:
+                positions_from_trades = self._get_positions_from_trades()
+                if positions_from_trades:
+                    print("从成交记录恢复持仓分布")
+                    self.positions = positions_from_trades['positions']
+                    self.position_records = positions_from_trades['records']
+                    self.total_position = positions_from_trades['total']
+                    self.grid_prices = new_grid_prices
+                    
+                    # 验证持仓状态
+                    if self._verify_positions():
+                        print("持仓恢复验证成功")
+                        return True
+                    print("持仓恢复验证失败,尝试网格迁移")
+            
+            # 使用网格迁移
+            print("执行网格迁移")
+            
+            # 保存当前状态用于回滚
+            old_positions = self.positions.copy()
+            old_records = {k: v.copy() for k, v in self.position_records.items()}
+            old_total = self.total_position
+            
+            # 初始化新状态
+            new_positions = {}
+            new_records = {}
+            
+            # 计算最高价网格
+            highest_grid = new_grid_prices[0]
+            for price in new_grid_prices[1:]:
+                if price > highest_grid:
+                    highest_grid = price
+            print(f"新网格最高价格: {highest_grid:.1f}")
+            
+            # 处理现有持仓
+            for grid_price, qty in old_positions.items():
+                if qty <= 0:
+                    continue
+                    
+                record = old_records[grid_price]
+                buy_price = record['buy_price']
+                
+                # 保留高位网格
+                if grid_price > highest_grid:
+                    print(f"保留高位网格 {grid_price:.1f} 的持仓 {qty}股")
+                    new_positions[grid_price] = qty
+                    new_records[grid_price] = record.copy()
+                    continue
+                    
+                # 合并到新网格
+                new_grid = self._find_nearest_grid_price(grid_price, new_grid_prices)
+                if new_grid in new_positions:
+                    old_qty = new_positions[new_grid]
+                    old_cost = new_records[new_grid]['buy_price']
+                    total_qty = old_qty + qty
+                    
+                    if total_qty <= self.position_limit:
+                        new_positions[new_grid] = total_qty
+                        total_value = old_qty * old_cost + qty * buy_price
+                        weighted_cost = int(total_value / total_qty * 10) / 10
+                        new_records[new_grid] = {
+                            'buy_price': weighted_cost,
+                            'quantity': total_qty,
+                            'update_time': time.time()
+                        }
+                        print(f"合并至网格 {new_grid:.1f}: +{qty}股 => {total_qty}股")
+                    else:
+                        print(f"网格 {new_grid:.1f} 将超出限制，保持原网格")
+                        new_positions[grid_price] = qty
+                        new_records[grid_price] = record.copy()
+                else:
+                    new_positions[new_grid] = qty
+                    new_records[new_grid] = {
+                        'buy_price': buy_price,
+                        'quantity': qty,
+                        'update_time': time.time()
+                    }
+                    print(f"迁移至网格 {new_grid:.1f}: {qty}股")
+                    
+            # 更新状态
+            self.grid_prices = new_grid_prices
+            self.positions = new_positions
+            self.position_records = new_records
+            self.total_position = sum(qty for qty in self.positions.values() if qty > 0)
+            
+            # 验证迁移结果
+            if self._verify_positions():
+                print("网格迁移成功")
+                return True
+                
+            # 验证失败时回滚
+            print("网格迁移验证失败，回滚并尝试强制同步")
+            self.positions = old_positions
+            self.position_records = old_records
+            self.total_position = old_total
+            
+            retry_count = 0
+            while retry_count < self.position_sync_retry:
+                if self._force_sync_position(actual_position, current_price):
+                    print("强制同步成功")
+                    return True
+                retry_count += 1
+                print(f"强制同步失败，重试 ({retry_count})")
+                
+            print("强制同步重试次数达到上限")
+            return False
+                
+        except Exception as e:
+            if str(e):  # 只在有实际错误信息时打印
+                print(f"网格迁移失败: {str(e)}")
+            return False
+
+    def _get_positions_from_trades(self):
+        """从历史成交记录中恢复持仓"""
+        try:
+            actual_position = self._get_position_qty(self.stock)
+            if actual_position == 0:
+                return None
+                
+            # 获取成交记录
+            execution_ids = request_executionid(symbol=self.stock)
+            if not execution_ids:
+                return None
+                
+            # 按时间顺序处理成交记录
+            trades = []
+            for eid in execution_ids:
+                if execution_status(eid) != "OK":
+                    continue
+                    
+                trades.append({
+                    'price': execution_price(eid),
+                    'quantity': execution_qty(eid),
+                    'side': execution_side(eid),
+                    'time': execution_time(eid)
+                })
+                
+            trades.sort(key=lambda x: x['time'])
+            
+            # 计算持仓分布
+            positions = {}
+            total_position = 0
+            
+            for trade in trades:
+                price = int(trade['price'] * 10) / 10  # 保持1位小数
+                qty = trade['quantity']
+                
+                if trade['side'] == OrderSide.BUY:
+                    if price not in positions:
+                        positions[price] = {
+                            'buy_price': price,
+                            'quantity': 0
+                        }
+                    positions[price]['quantity'] += qty
+                    total_position += qty
+                else:  # SELL
+                    remaining_qty = qty
+                    # 从最高价的持仓开始减少
+                    for p in sorted(positions.keys(), reverse=True):
+                        if remaining_qty <= 0:
+                            break
+                        if positions[p]['quantity'] > 0:
+                            deduct = min(positions[p]['quantity'], remaining_qty)
+                            positions[p]['quantity'] -= deduct
+                            remaining_qty -= deduct
+                            total_position -= deduct
+                            if positions[p]['quantity'] == 0:
+                                del positions[p]
+                                
+            # 验证计算结果
+            calculated_position = sum(p['quantity'] for p in positions.values())
+            if abs(calculated_position - actual_position) > 0.01:
+                print(f"持仓计算不一致: 计算={calculated_position}, 实际={actual_position}")
+                return None
+                
+            return {
+                'positions': positions,
+                'total': calculated_position
+            }
+                
+        except Exception as e:
+            print(f"从成交记录恢复持仓失败: {str(e)}")
+            return None
+
+    def _find_nearest_grid_price(self, target_price, grid_prices):
+        """在给定的价格列表中找到最接近的网格价格"""
+        try:
+            if not grid_prices:
+                return None
+                
+            target_price = int(target_price * 10) / 10  # 保持1位小数
+            
+            nearest_price = grid_prices[0]
+            min_distance = abs(target_price - nearest_price)
+            
+            for price in grid_prices[1:]:
+                distance = abs(target_price - price)
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_price = price
+                    
+            return nearest_price
+            
+        except Exception as e:
+            print(f"查找最近网格价格失败: {str(e)}")
+            return None
+
+    def _find_nearest_grid(self, target_price):
+        """在当前网格中找到最接近的价格"""
+        return self._find_nearest_grid_price(target_price, self.grid_prices)
+
+    def _should_reset_grid(self, latest_price):
+        """判断是否需要重置网格"""
+        try:
+            if not self.grid_prices:
+                return True
+                    
+            closest_grid = self._find_nearest_grid(latest_price)
+            if not closest_grid:
+                return True
+                
+            deviation = abs(latest_price - closest_grid) / closest_grid
+            return deviation > self.grid_percentage
+                
+        except Exception as e:
+            print(f"检查网格重置时发生错误: {str(e)}")
+            return False
+
+    def _recover_positions(self):
+        """恢复已有持仓状态"""
+        try:
+            # 基础验证
+            required_params = ['grid_percentage', 'grid_num', 'position_limit']
+            for param in required_params:
+                if not hasattr(self, param):
+                    print(f"错误：参数 {param} 未初始化")
+                    return False
+
+            actual_position = self._get_position_qty(self.stock)
+            if actual_position == 0:
+                return True
+
+            # 获取当前价格
+            latest_price = self._get_latest_price(self.stock)
+            if not latest_price:
+                print("无法获取当前价格，恢复失败")
+                return False
+
+            print(f"当前持仓: {actual_position}股")
+            
+            # 优先从成交记录恢复
+            if self.use_trade_records:
+                positions_from_trades = self._get_positions_from_trades()
+                if positions_from_trades:
+                    print("从成交记录中恢复持仓分布成功")
+                    self.positions = positions_from_trades['positions']
+                    self.total_position = positions_from_trades['total']
+                    
+                    # 初始化网格价格
+                    grid_spacing = latest_price * self.grid_percentage
+                    base_grid = int(latest_price * 10) / 10
+                    half_grids = self.grid_num // 2
+                    
+                    # 生成网格价格
+                    self.grid_prices = []
+                    for i in range(half_grids + 1):
+                        if i == 0:
+                            self.grid_prices.append(base_grid)
+                        else:
+                            up_price = int((base_grid + i * grid_spacing) * 10) / 10
+                            down_price = int((base_grid - i * grid_spacing) * 10) / 10
+                            self.grid_prices.extend([up_price, down_price])
+                    self.grid_prices.sort()
+                    
+                    print("\n恢复后的网格状态:")
+                    self._print_grid_status(show_all=True)
+                    
+                    if self._verify_positions():
+                        print("持仓验证成功")
+                        return True
+                    
+            # 如果从成交记录恢复失败，使用强制同步
+            print("尝试使用强制同步恢复持仓")
+            avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+            if not avg_cost:
+                avg_cost = latest_price
+                
+            return self._initialize_grids(latest_price)
+                
+        except Exception as e:
+            print(f"恢复持仓状态时发生错误: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
+    def _check_profit_before_reset(self, current_price):
+        """重置网格前检查盈利机会"""
+        try:
+            print("检查重置前的盈利机会")
+            # 获取实时卖出价格
+            sell_price = bid(self.stock, level=1) or current_price
+            
+            # 检查所有持仓的盈利情况
+            profitable_grids = []
+            
+            for grid_price, qty in sorted(self.positions.items()):
+                if qty <= 0:
+                    continue
+                    
+                record = self.position_records[grid_price]
+                buy_price = record['buy_price']
+                price_diff = (sell_price - buy_price) / buy_price
+                
+                if price_diff >= self.grid_percentage:
+                    print(f"发现盈利机会: 网格={grid_price:.1f} 持仓={qty} 成本={buy_price:.1f} 盈利={price_diff:.1%}")
+                    profitable_grids.append((grid_price, qty, buy_price))
+            
+            # 执行批量卖出
+            if profitable_grids:
+                # 不检查周期限制，因为这是网格重置前的强制检查
+                if self._execute_batch_sell(profitable_grids, current_price):
+                    print("完成盈利了结")
+                    return True
+                    
+            return False
+            
+        except Exception as e:
+            print(f"检查重置前盈利失败: {str(e)}")
+            return False
+
+    def _force_sync_position(self, actual_position, current_price):
+        """强制同步持仓状态"""
+        try:
+            print("执行强制持仓同步...")
+            # 处理空仓情况
+            if actual_position == 0:
+                old_position = self.total_position  # 记录旧持仓用于日志
+                self.positions.clear()
+                self.position_records.clear()
+                self.total_position = 0
+                print(f"检测到空仓，清空所有持仓记录 (原持仓: {old_position})")
+                return True
+                
+            # 获取平均成本
+            avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+            if not avg_cost:
+                avg_cost = current_price
+                
+            # 保存旧状态用于回滚
+            old_positions = self.positions.copy()
+            old_records = self.position_records.copy()
+            old_total = self.total_position
+            
+            # 寻找合适的网格
+            target_grid = None
+            cost_grid = self._find_nearest_grid(avg_cost)
+            price_grid = self._find_nearest_grid(current_price)
+            
+            # 优先使用成本价对应的网格
+            if cost_grid and self._is_price_within_grid(avg_cost, cost_grid):
+                target_grid = cost_grid
+            elif price_grid and self._is_price_within_grid(current_price, price_grid):
+                target_grid = price_grid
+                
+            if not target_grid:
+                print("无法找到合适的网格")
+                return False
+                
+            # 更新持仓记录
+            self.positions = {target_grid: actual_position}
+            self.position_records = {
+                target_grid: {
+                    'buy_price': int(avg_cost * 10) / 10,
+                    'quantity': actual_position,
+                    'update_time': time.time()
+                }
+            }
+            self.total_position = actual_position
+            
+            # 更新并验证
+            if self._verify_positions():
+                print(f"强制同步完成 - 网格:{target_grid:.1f}, 持仓:{actual_position}, 成本:{avg_cost:.1f}")
+                self._print_grid_status(show_all=False)  # 打印当前状态
+                return True
+                
+            # 验证失败时回滚
+            print("强制同步验证失败，执行回滚")
+            self.positions = old_positions
+            self.position_records = old_records
+            self.total_position = old_total
+            return False
+                
+        except Exception as e:
+            if str(e):  # 只在有实际错误信息时打印
+                print(f"强制同步失败: {str(e)}")
+            return False
+
+    def _get_positions_from_trades(self):
+        """从历史成交记录中恢复持仓"""
+        try:
+            actual_position = self._get_position_qty(self.stock)
+            if actual_position == 0:
+                return None
+                
+            print("开始从成交记录恢复持仓分布")
+            print(f"当前实际持仓: {actual_position}股")
+            
+            # 获取成交记录
+            execution_ids = request_executionid(symbol=self.stock)
+            if not execution_ids:
+                print("无法获取成交记录")
+                return None
+                
+            # 按时间顺序处理成交记录
+            trades = []
+            for eid in execution_ids:
+                if execution_status(eid) != "OK":
+                    continue
+                    
+                trades.append({
+                    'price': execution_price(eid),
+                    'quantity': execution_qty(eid),
+                    'side': execution_side(eid),
+                    'time': execution_time(eid)
+                })
+                
+            trades.sort(key=lambda x: x['time'])
+            
+            # 计算持仓分布
+            positions = {}
+            records = {}
+            total_position = 0
+            
+            print("\n处理成交记录...")
+            for trade in trades:
+                price = int(trade['price'] * 10) / 10  # 保持1位小数
+                qty = trade['quantity']
+                
+                if trade['side'] == OrderSide.BUY:
+                    if price not in positions:
+                        positions[price] = 0
+                        records[price] = {
+                            'buy_price': price,
+                            'quantity': 0,
+                            'update_time': time.time()
+                        }
+                    positions[price] += qty
+                    records[price]['quantity'] = positions[price]
+                    total_position += qty
+                    print(f"买入: {qty}股 @ {price:.1f}")
+                else:  # SELL
+                    remaining_qty = qty
+                    # 从最高价的持仓开始减少
+                    for p in sorted(positions.keys(), reverse=True):
+                        if remaining_qty <= 0:
+                            break
+                        if positions[p] > 0:
+                            deduct = min(positions[p], remaining_qty)
+                            positions[p] -= deduct
+                            records[p]['quantity'] = positions[p]
+                            remaining_qty -= deduct
+                            total_position -= deduct
+                            print(f"卖出: 从价格{p:.1f}扣减{deduct}股")
+                            if positions[p] == 0:
+                                del positions[p]
+                                del records[p]
+                                
+            # 清理空持仓
+            for price in list(positions.keys()):
+                if positions[price] <= 0:
+                    del positions[price]
+                    del records[price]
+                    
+            # 验证计算结果
+            calculated_position = sum(positions.values())
+            print(f"\n计算持仓: {calculated_position}股")
+            print(f"实际持仓: {actual_position}股")
+            
+            if abs(calculated_position - actual_position) > 0.01:
+                print("持仓计算不一致")
+                return None
+                
+            print("\n持仓分布:")
+            for price, qty in sorted(positions.items()):
+                cost = records[price]['buy_price']
+                print(f"价格 {price:.1f}: {qty}股, 成本 {cost:.1f}")
+                
+            return {
+                'positions': positions,
+                'records': records,
+                'total': calculated_position
+            }
+                
+        except Exception as e:
+            print(f"从成交记录恢复持仓失败: {str(e)}")
+            return None
+
+    def _is_price_within_grid(self, price, grid_price):
+        """判断价格是否在网格允许范围内"""
+        try:
+            if not price or not grid_price:
+                return False
+                
+            price_diff = abs(price - grid_price) / grid_price
+            max_deviation = self.grid_percentage * 0.5  # 允许最大偏差为网格间距的一半
+            return price_diff <= max_deviation
+                
+        except Exception as e:
+            print(f"检查价格偏差失败: {str(e)}")
+            return False
+
+    def _should_execute_trade(self, grid_price, current_price):
+        """判断是否应该执行交易"""
+        try:
+            # 放宽价格偏差限制
+            price_diff = abs(current_price - grid_price) / grid_price
+            max_deviation = self.grid_percentage * 0.75  # 修改偏差允许范围
+            
+            if price_diff > max_deviation:
+                print(f"当前价格{current_price:.1f}超出网格{grid_price:.1f}允许范围")
+                return False
+                
+            current_pos = self.positions.get(grid_price, 0)
+            if current_pos >= self.position_limit:
+                print(f"网格{grid_price:.1f}持仓{current_pos}已达上限{self.position_limit}")
+                return False
+                
+            if self.total_position >= self.max_total_position:
+                print(f"总持仓{self.total_position}已达上限{self.max_total_position}")
+                return False
+                
+            return True
+                
+        except Exception as e:
+            print(f"交易前检查失败: {str(e)}")
+            return False
