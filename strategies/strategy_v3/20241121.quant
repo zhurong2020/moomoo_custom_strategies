@@ -139,7 +139,7 @@ class Strategy(StrategyBase):
     def _recover_positions(self):
         """恢复已有持仓状态"""
         try:
-            # 先验证必要参数是否已初始化
+            # 基础验证
             required_params = ['grid_percentage', 'grid_num', 'position_limit']
             for param in required_params:
                 if not hasattr(self, param):
@@ -150,7 +150,7 @@ class Strategy(StrategyBase):
             if actual_position == 0:
                 return True
 
-            # 获取当前价格和持仓成本
+            # 获取当前价格
             latest_price = current_price(self.stock)
             if not latest_price:
                 print("无法获取当前价格，恢复失败")
@@ -158,8 +158,7 @@ class Strategy(StrategyBase):
 
             print(f"当前持仓: {actual_position}股")
             
-            # === 修改开始: 通过成交记录恢复持仓 ===
-            # 尝试从成交记录恢复持仓分布
+            # 优先尝试从成交记录恢复持仓分布
             positions_from_trades = self._get_positions_from_trades()
             
             if positions_from_trades:
@@ -168,30 +167,19 @@ class Strategy(StrategyBase):
                 self.position_records = positions_from_trades['records']
                 self.total_position = positions_from_trades['total']
                 
-                # 添加这里：打印恢复后的网格状态
+                # 打印恢复后的网格状态
                 print("\n恢复后的网格状态:")
-                self._print_grid_status(show_all=False, show_time=True)  # 只显示有持仓的网格
-            
+                self._print_grid_status(show_all=False, show_time=True)
+                
                 # 验证恢复结果
                 if self._verify_positions():
                     print("持仓验证成功")
+                    self.is_initialized = True
                     return True
-                else:
-                    print("持仓验证失败，尝试使用平均成本价恢复")
             
-            # 如果无法从成交记录恢复，使用平均成本价
-            avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
-            if not avg_cost:
-                print("无法获取持仓成本信息，恢复失败")
-                return False
-                
-            print(f"平均成本: {avg_cost:.2f}")
-            print(f"当前价格: {latest_price:.2f}")
-            # === 修改结束 ===
-
-            # 基于当前价格初始化网格
+            # 如果从成交记录恢复失败，使用新的算法基于当前价格重新分配
             grid_spacing = latest_price * self.grid_percentage
-            base_grid = int(latest_price * 10) / 10  # 保持1位小数
+            base_grid = int(latest_price * 10) / 10
             half_grids = self.grid_num // 2
             
             # 生成网格价格
@@ -202,50 +190,65 @@ class Strategy(StrategyBase):
                 self.grid_prices.extend([up_price, down_price])
             self.grid_prices.sort()
 
-            # 找到最接近成本价的网格
-            cost_grid = self._find_nearest_grid(avg_cost)
-            if not cost_grid:
-                print("无法找到合适的网格来分配持仓")
-                return False
-
-            # 计算需要分配的网格数
-            grids_needed = (actual_position + self.position_limit - 1) // self.position_limit
-            print(f"需要使用{grids_needed}个网格来分配当前持仓")
-
-            # === 20241203修改开始修改网格分配逻辑 ===
+            # 获取成交记录用于计算各价位的持仓成本
+            trades = []
+            execution_ids = request_executionid(symbol=self.stock)
+            for eid in execution_ids:
+                if execution_status(eid) == "OK":
+                    trades.append({
+                        'price': execution_price(eid),
+                        'quantity': execution_qty(eid),
+                        'side': execution_side(eid),
+                        'time': execution_time(eid)
+                    })
+            
+            # 按时间排序
+            trades.sort(key=lambda x: x['time'])
+            
+            # 根据成交记录计算每个价位的持仓和成本
+            position_costs = {}  # 记录每个价位的持仓和成本
+            remaining_position = actual_position
+            
             with self._position_lock:
-                remaining_position = actual_position
-                allocated_grids = set()
+                # 初始化新的持仓记录
+                self.positions = {}
+                self.position_records = {}
                 
-                # 按照与成本价的距离排序网格
-                sorted_grids = sorted(self.grid_prices, key=lambda x: abs(x - avg_cost))
+                # 遍历网格价格，从最接近当前价格的网格开始分配
+                sorted_grids = sorted(self.grid_prices, 
+                                    key=lambda x: abs(x - latest_price))
                 
                 for grid_price in sorted_grids:
                     if remaining_position <= 0:
                         break
                         
-                    if grid_price in allocated_grids:
-                        continue
-                        
+                    # 确定分配到当前网格的数量
                     allocation = min(self.position_limit, remaining_position)
+                    
+                    # 计算该网格的加权平均成本
+                    grid_trades = [t for t in trades 
+                                if abs(t['price'] - grid_price) / grid_price <= self.grid_percentage]
+                    if grid_trades:
+                        total_cost = sum(t['price'] * t['quantity'] 
+                                    for t in grid_trades if t['side'] == OrderSide.BUY)
+                        total_qty = sum(t['quantity'] 
+                                    for t in grid_trades if t['side'] == OrderSide.BUY)
+                        grid_cost = total_cost / total_qty if total_qty > 0 else grid_price
+                    else:
+                        grid_cost = grid_price
+                    
+                    # 更新持仓记录
                     self.positions[grid_price] = allocation
                     self.position_records[grid_price] = {
-                        'buy_price': avg_cost,
+                        'buy_price': grid_cost,
                         'quantity': allocation,
                         'update_time': time.time()
                     }
                     
                     remaining_position -= allocation
-                    allocated_grids.add(grid_price)
-                    print(f"分配 {allocation}股 到网格 {grid_price:.1f}")
-                # === 修改结束 ===
-
-                self.total_position = sum(self.positions.values())
+                    print(f"分配 {allocation}股 到网格 {grid_price:.1f}, 成本价 {grid_cost:.1f}")
                 
-                # 验证分配结果
-                if self.total_position != actual_position:
-                    print(f"警告：分配后总持仓({self.total_position}) != 实际持仓({actual_position})")
-                    return False
+                self.total_position = sum(self.positions.values())
 
             print(f"持仓分配完成")
             self._print_grid_status(show_all=True)
@@ -688,42 +691,38 @@ class Strategy(StrategyBase):
             print(f"持仓总数: {total_positions}股")
             print(f"实际持仓: {actual_position}股")
             
-            # 检查活动网格重复和持仓限制
-            grid_counts = {}
+            # 检查标准网格
+            grid_prices = set()
             for grid, qty in self.positions.items():
                 if qty > 0:
-                    if grid in grid_counts:
-                        print(f"错误:活动网格{grid}重复分配")
+                    if grid in grid_prices:
+                        print(f"错误:标准网格{grid}重复分配")
                         return False
-                    grid_counts[grid] = qty
+                    grid_prices.add(grid)
                     
                     if qty > self.position_limit:
-                        print(f"错误:活动网格{grid}超出持仓限制")
+                        print(f"错误:标准网格{grid}超出持仓限制({qty}>{self.position_limit})")
                         return False
             
-            # 检查高位网格重复和持仓限制
-            high_grid_counts = {}
+            # 检查高位网格
             for grid, qty in self.high_positions.items():
                 if qty > 0:
-                    if grid in high_grid_counts:
-                        print(f"错误:高位网格{grid}重复分配")
+                    if grid in grid_prices:
+                        print(f"错误:高位网格{grid}与标准网格重叠")
                         return False
-                    high_grid_counts[grid] = qty
+                    if grid in self.positions:
+                        print(f"错误:高位网格{grid}价格与标准网格冲突")
+                        return False
                     
                     if qty > self.position_limit:
-                        print(f"错误:高位网格{grid}超出持仓限制")
-                        return False
-                    
-                    # 确保高位网格价格不在活动网格范围内
-                    if grid in self.positions:
-                        print(f"错误:高位网格{grid}与活动网格重叠")
+                        print(f"错误:高位网格{grid}超出持仓限制({qty}>{self.position_limit})")
                         return False
             
-            if abs(total_positions - actual_position) > 0.01:  # 允许0.01的误差
+            if abs(total_positions - actual_position) > 0.01:
                 print(f"持仓不一致 - 实际:{actual_position} != 记录:{total_positions}")
                 return False
                 
-            self.total_position = total_positions  # 更新总持仓记录
+            self.total_position = total_positions
             return True
                 
         except Exception as e:
@@ -1380,7 +1379,8 @@ class Strategy(StrategyBase):
                     continue
                 
                 print(f"\n处理价格 {price:.1f} 的 {qty}股持仓")
-                
+                remaining_qty = qty
+
                 # 判断是否应该进入高位网格
                 if price > highest_grid:
                     print(f"价格 {price:.1f} 高于最高网格 {highest_grid:.1f}，保存为高位网格")
@@ -1392,47 +1392,55 @@ class Strategy(StrategyBase):
                     }
                     continue
                     
-                # 找到最近的网格
-                nearest_grid = self._find_nearest_price_in_list(price, grid_prices)
-                if not nearest_grid:
-                    print(f"无法为价格 {price:.1f} 找到合适的网格")
-                    continue
-                        
-                current_qty = grid_positions.get(nearest_grid, 0)
-                print(f"分配到网格 {nearest_grid:.1f}（当前持仓: {current_qty}股）")
-                    
-                # 检查网格容量
-                if current_qty + qty > self.position_limit:
-                    # 需要分配到下一个网格
-                    available_space = self.position_limit - current_qty
-                    if available_space > 0:
-                        grid_positions[nearest_grid] = self.position_limit
-                        grid_records[nearest_grid] = {
-                            'buy_price': price,
-                            'quantity': self.position_limit,
-                            'update_time': time.time()
-                        }
-                        qty -= available_space
-                        print(f"网格 {nearest_grid:.1f} 已达上限，分配 {available_space}股")
-                        
-                        if qty > 0:
-                            print(f"剩余 {qty}股需要保存为高位网格")
-                            high_positions[price] = qty
-                            high_records[price] = {
-                                'buy_price': price,
-                                'quantity': qty,
-                                'update_time': time.time()
-                            }
-                            
-                else:
-                    # 直接添加到当前网格
-                    grid_positions[nearest_grid] = current_qty + qty
-                    grid_records[nearest_grid] = {
+                # 判断是否高于最高网格
+                if price > highest_grid:
+                    print(f"价格 {price:.1f} 高于最高网格 {highest_grid:.1f}，保存为高位网格")
+                    high_positions[price] = qty
+                    high_records[price] = {
                         'buy_price': price,
-                        'quantity': current_qty + qty,
+                        'quantity': qty,
                         'update_time': time.time()
                     }
-                    print(f"完整分配 {qty}股到网格 {nearest_grid:.1f}")
+                    continue
+                
+                # 尝试分配到标准网格
+                for grid_price in sorted(grid_prices, key=lambda x: abs(x - price)):
+                    if remaining_qty <= 0:
+                        break
+                        
+                    current_qty = grid_positions.get(grid_price, 0)
+                    available_space = self.position_limit - current_qty
+                    
+                    if available_space > 0:
+                        alloc_qty = min(remaining_qty, available_space)
+                        grid_positions[grid_price] = current_qty + alloc_qty
+                        if current_qty == 0:
+                            grid_records[grid_price] = {
+                                'buy_price': price,
+                                'quantity': alloc_qty,
+                                'update_time': time.time()
+                            }
+                        else:
+                            # 计算加权平均成本
+                            old_cost = grid_records[grid_price]['buy_price']
+                            new_cost = (old_cost * current_qty + price * alloc_qty) / (current_qty + alloc_qty)
+                            grid_records[grid_price].update({
+                                'buy_price': new_cost,
+                                'quantity': current_qty + alloc_qty,
+                                'update_time': time.time()
+                            })
+                        remaining_qty -= alloc_qty
+                        print(f"分配 {alloc_qty}股 到网格 {grid_price:.1f}")
+                
+                # 如果还有剩余，才转为高位网格
+                if remaining_qty > 0:
+                    print(f"剩余 {remaining_qty}股无法分配到标准网格，转为高位网格")
+                    high_positions[price] = remaining_qty
+                    high_records[price] = {
+                        'buy_price': price,
+                        'quantity': remaining_qty,
+                        'update_time': time.time()
+                    }
             
             # 清理原有的高位网格记录
             self.high_positions = {}
@@ -1620,7 +1628,21 @@ class Strategy(StrategyBase):
 
     def _clean_empty_high_grids(self):
         """清理空仓的高位网格记录"""
-        empty_grids = [grid for grid, qty in self.high_positions.items() if qty <= 0]
-        for grid in empty_grids:
-            self.high_positions.pop(grid)
-            self.high_records.pop(grid)
+        try:
+            # 清理空仓位
+            empty_grids = [grid for grid, qty in self.high_positions.items() 
+                        if qty <= 0 or grid in self.positions]
+            
+            for grid in empty_grids:
+                if grid in self.high_positions:
+                    print(f"清理高位网格: {grid}")
+                    self.high_positions.pop(grid)
+                    self.high_records.pop(grid)
+            
+            # 验证清理结果
+            for grid in self.high_positions:
+                if grid in self.positions:
+                    print(f"警告: 高位网格{grid}仍与标准网格重叠")
+                    
+        except Exception as e:
+            print(f"清理高位网格时发生错误: {str(e)}")
