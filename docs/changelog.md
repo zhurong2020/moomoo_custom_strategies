@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [strategy_v3_1] - 2024-11-25
+### Added
+- Introduced `enable_position_sync_in_backtest` parameter to allow skipping position synchronization during backtesting
+- Improved backtest performance by reducing computational overhead, especially for long-duration and high-frequency (e.g., 5-minute) intervals
+- Maintained full functionality in live trading mode while providing flexibility in backtest environments
+- Enhanced position synchronization mechanism to support both live and backtest modes
+- Updated README documentation with detailed parameter descriptions and usage instructions
+
 ## [strategy_v3] - 2024-11-21
 ### Added
 - Created strategy_v3 with improved grid trading implementation
