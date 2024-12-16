@@ -1,5 +1,5 @@
 class Strategy(StrategyBase):
-    """网格交易策略V7 - 精简输出"""
+    """网格交易策略V7 - 精简输出关闭回测时持仓同步"""
     
     def initialize(self):
         """初始化策略（精简日志输出）"""
@@ -79,7 +79,9 @@ class Strategy(StrategyBase):
             self.use_trade_records = show_variable(True, GlobalType.BOOL, "使用成交记录恢复持仓")
             self.trade_record_days = show_variable(31, GlobalType.INT, "成交记录查询天数(1-31)")
             self.position_sync_retry = show_variable(3, GlobalType.INT, "持仓同步重试次数")
-            
+            # 在回测环境下可将此参数设为False以加速回测。
+            self.enable_position_sync_in_backtest = show_variable(True, GlobalType.BOOL, "回测中是否进行持仓同步")
+
             print("全局变量设置完成")
                 
         except Exception as e:
@@ -137,10 +139,16 @@ class Strategy(StrategyBase):
             print(f"\n当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"当前价格: {latest_price:.1f}")
             
-            # 定期同步持仓状态
-            if not self.last_sync_time or (current_time - self.last_sync_time).total_seconds() > 300:  # 5分钟同步一次
-                if self._sync_positions():
-                    self.last_sync_time = current_time
+            # 定期同步持仓状态（根据标志位决定是否执行）
+            if self.enable_position_sync_in_backtest:
+                # 只有在回测允许同步时才执行此逻辑
+                if not self.last_sync_time or (current_time - self.last_sync_time).total_seconds() > 300:
+                    if self._sync_positions():
+                        self.last_sync_time = current_time
+            else:
+                # 如果不执行同步，这里什么都不做
+                # 可根据需要打印一次信息或者直接pass
+                pass
                 
             # 检查是否新周期
             if not self._is_new_period(current_time):
@@ -1216,6 +1224,11 @@ class Strategy(StrategyBase):
     def _sync_positions(self, force_mode=False):
         """同步持仓状态（精简日志）"""
         try:
+            # 如果在回测中不需要同步，且标志位为False，可在此处直接跳过
+            if not self.enable_position_sync_in_backtest:
+                # 跳过同步，直接返回True表示不修改现有记录
+                return True
+
             actual_position = self._get_position_qty(self.stock)
             if actual_position == 0:
                 self.positions.clear()
