@@ -80,11 +80,11 @@ class Strategy(StrategyBase):
         """定义全局变量"""
         try:
             # 用户可配置参数
-            self.initial_capital = show_variable(10000, GlobalType.FLOAT, "初始资金")
+            # self.initial_capital = show_variable(10000, GlobalType.FLOAT, "初始资金")
             self.max_total_position = show_variable(500, GlobalType.INT, "最大总持仓")
             self.min_order_quantity = show_variable(20, GlobalType.INT, "单次交易数量")
             self.position_limit = show_variable(80, GlobalType.INT, "单个网格持仓上限")
-            self.time_interval = show_variable(60, GlobalType.INT, "交易间隔(分钟)")
+            # self.time_interval = show_variable(60, GlobalType.INT, "交易间隔(分钟)")
             
             # 统一网格间距和盈利标准
             self.grid_percentage = show_variable(0.03, GlobalType.FLOAT, "网格间距/盈利标准")
@@ -720,6 +720,8 @@ class Strategy(StrategyBase):
             
             if abs(total_positions - actual_position) > 0.01:
                 print(f"持仓不一致 - 实际:{actual_position} != 记录:{total_positions}")
+                # 强制同步实际持仓
+                self._force_sync_position(actual_position)
                 return False
                 
             self.total_position = total_positions
@@ -1535,12 +1537,18 @@ class Strategy(StrategyBase):
                     self._print_grid_status(show_all=False, show_time=True)
                     return True
                 
-                # 如果验证失败，回滚更新
-                print("批量更新持仓验证失败，执行回滚")
-                self.positions = old_positions
-                self.position_records = old_records
-                self.total_position = old_total
-                return False
+                # 如果验证失败，尝试强制同步实际持仓
+                print("批量更新持仓验证失败，尝试强制同步")
+                if not self._force_sync_position(position_holding_qty(self.stock)):
+                    print("强制同步失败，执行回滚")
+                    # 回滚更新
+                    self.positions = old_positions
+                    self.position_records = old_records
+                    self.total_position = old_total
+                    return False
+                
+                print("强制同步后持仓验证成功")
+                return True
                     
             except Exception as e:
                 print(f"批量更新持仓失败: {str(e)}")
