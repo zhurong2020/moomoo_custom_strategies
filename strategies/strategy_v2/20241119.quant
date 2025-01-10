@@ -586,55 +586,76 @@ class Strategy(StrategyBase):
             exec_info = self._fallback_exec_info(order_id)
             return exec_info
 
-    def _get_recent_trades_by_time(self, order_id):
+    def _get_recent_trades_by_time(self, order_id=None, start=None, end=None):
         """
-        尝试基于时间范围/交易方向/数量等信息，去 request_executionid(...) 查找最新成交，
-        并与当前订单相匹配(仅作简易示例).
+        返回一个列表，每个元素是 dict:
+            {
+            'price': float,
+            'quantity': float,
+            'is_buy': bool,
+            'time': datetime 或 str
+            }
+
+        如果没有找到任何符合条件的成交，就返回空列表 []。
         """
+
         try:
-            # 假设记录了订单创建时间
-            order_create_time1 = time.time() - 60  # 示例：假设订单是1分钟前下的
-            start_str = datetime.datetime.fromtimestamp(order_create_time1).strftime('%Y-%m-%d %H:%M:%S')
-            end_str   = device_time(TimeZone.DEVICE_TIME_ZONE).strftime('%Y-%m-%d %H:%M:%S')
+            # 如果没有给 start / end，就默认查最近 self.trade_record_days 天
+            if not start and not end:
+                start_time_dt = device_time(TimeZone.DEVICE_TIME_ZONE) - datetime.timedelta(days=self.trade_record_days)
+                start = start_time_dt.strftime('%Y-%m-%d %H:%M:%S')
+                end = device_time(TimeZone.DEVICE_TIME_ZONE).strftime('%Y-%m-%d %H:%M:%S')
 
-            # 获取这段时间内的所有成交ID
-            execution_ids = request_executionid(symbol=self.stock, start=start_str, end=end_str)
+            execution_ids = request_executionid(symbol=self.stock, start=start, end=end)
             if not execution_ids:
-                return None
+                return []  # 返回空列表
 
-            # 遍历每个成交ID, 看看是否跟order_id信息(或方向/数量等)能对应上
-            # 这里可以根据 self.order_records[order_id]['qty'] / side / grid_price 做一定匹配.
-            total_qty = 0
-            total_value = 0
-            last_time = None
+            trade_list = []  # 用于存储逐笔成交信息
 
             for eid in execution_ids:
                 status = execution_status(eid)
                 if status != "OK":
                     continue
+
                 qty = execution_qty(eid)
                 price = execution_price(eid)
+                side = execution_side(eid)
                 exec_time = execution_time(eid, time_zone=TimeZone.MARKET_TIME_ZONE)
-                # 简单判断：只要在此时间范围内是BUY，就暂且认为是我们的成交(仅示例，实际要更严谨)
-                if self.order_records.get(order_id, {}).get('side') == OrderSide.BUY:
-                    total_qty += qty
-                    total_value += price * qty
-                    if not last_time or exec_time > last_time:
-                        last_time = exec_time
 
-            if total_qty == 0:
-                return None
+                # 如果 order_id 不为空，就再判断一下该笔成交是否应该加入
+                if order_id is not None:
+                    record_side = self.order_records.get(order_id, {}).get('side')
+                    # 如果订单方向是买单，并且当前成交也是买单，则记录
+                    if record_side == OrderSide.BUY and side == OrderSide.BUY:
+                        trade_list.append({
+                            'price': price,
+                            'quantity': qty,
+                            'is_buy': True,
+                            'time': exec_time
+                        })
+                    # 如果订单方向是卖单，并且当前成交也是卖单，则记录
+                    elif record_side == OrderSide.SELL and side == OrderSide.SELL:
+                        trade_list.append({
+                            'price': price,
+                            'quantity': qty,
+                            'is_buy': False,
+                            'time': exec_time
+                        })
+                    # 否则就不添加记录
+                else:
+                    # 如果 order_id=None，则把所有成交都加进来
+                    trade_list.append({
+                        'price': price,
+                        'quantity': qty,
+                        'is_buy': (side == OrderSide.BUY),
+                        'time': exec_time
+                    })
 
-            avg_price = total_value / total_qty
-            return {
-                "avg_price": avg_price,
-                "total_qty": total_qty,
-                "last_time": last_time,
-            }
+            return trade_list  # 返回一个列表
 
         except Exception as e:
             print(f"_get_recent_trades_by_time 出错: {str(e)}")
-            return None
+            return []
 
     def _get_execution_info(self, order_id, symbol):
         """
