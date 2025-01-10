@@ -107,7 +107,6 @@
 ### 6.1 关键函数
 - `initialize()`: 策略初始化
 - `_update_grid()`: 网格更新管理
-- `_check_grid_profit()`: 盈利检测
 - `_place_buy_order()`: 买入订单管理
 - `_process_executions()`: 订单执行处理
 - `handle_data()`: 主要交易逻辑
