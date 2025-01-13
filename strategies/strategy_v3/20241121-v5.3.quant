@@ -494,9 +494,18 @@ class Strategy(StrategyBase):
     def _verify_positions(self):
         """验证持仓数据一致性"""
         try:
+            # 如果 ignore_isolation=True，则用虚拟值(实际持仓-隔离仓位)
             actual_position = position_holding_qty(self.stock)
+            if self.ignore_isolation:
+                # 计算手动仓位总数
+                manual_total = sum(self.manual_positions.values())
+                # 如果 manual_total>actual_position，就设成0，防止负数
+                virtual_position = max(0, actual_position - manual_total)
+                print(f"[隔离模式] 实际持仓={actual_position}, 手动={manual_total}, 虚拟持仓={virtual_position}")
+            else:
+                virtual_position = actual_position
             
-            # 计算所有持仓(标准网格 + 高位网格)
+            # 下面对比时用 virtual_position 而非 actual_position
             total_active = sum(qty for qty in self.positions.values() if qty > 0)
             total_high = sum(qty for qty in self.high_positions.values() if qty > 0)
             total_positions = total_active + total_high
@@ -505,36 +514,15 @@ class Strategy(StrategyBase):
             print(f"活动网格持仓: {total_active}股")
             print(f"高位网格持仓: {total_high}股")
             print(f"持仓总数: {total_positions}股")
-            print(f"实际持仓: {actual_position}股")
+            print(f"实际持仓: {actual_position}股 (虚拟持仓: {virtual_position}股)")  # 打印出来供观察
             
-            # === 20250113修改核心逻辑：对于超限持仓仅做告警，不再 return False ===
-            for grid, qty in self.positions.items():
-                if qty > self.position_limit:
-                    print(
-                        f"警告: 网格{grid}当前持仓{qty}已超过单网格持仓上限({self.position_limit})。"
-                        "将保留此仓位，等待满足盈利条件后一次性卖出。"
-                    )
-                    # 不再 return False
-
-            for grid, qty in self.high_positions.items():
-                if qty > self.position_limit:
-                    print(
-                        f"警告: 高位网格{grid}当前持仓{qty}已超过单网格持仓上限({self.position_limit})。"
-                        "将保留此仓位，等待满足盈利条件后一次性卖出。"
-                    )
-                    # 不再 return False
-            # === 修改结束 ===
-
-            # 如果实际持仓和策略记录的持仓总数不匹配，仍然可返回 False
-            # 这是区分“真实错误”或“需要再同步成交记录/强制同步”的情况
-            
-            if abs(total_positions - actual_position) > 0.01:
-                print(f"持仓不一致 - 实际:{actual_position} != 策略记录:{total_positions}")
+            # 如果 virtual_position != total_positions，就判定不一致
+            if abs(total_positions - virtual_position) > 0.01:
+                print(f"持仓不一致 - 虚拟:{virtual_position} != 策略记录:{total_positions}")
                 return False
-                
+            
             self.total_position = total_positions
             return True
-                
         except Exception as e:
             print(f"验证持仓失败: {str(e)}")
             return False
@@ -994,7 +982,14 @@ class Strategy(StrategyBase):
             return False
 
     def _initialize_grids(self, base_price):
-        """初始化或重置网格"""
+        """
+        初始化或重置网格
+
+        主要逻辑：
+        1. 若已进入“隔离模式”（ignore_isolation=True），则即使检测到实际持仓 > 0，也不再进行迁移或持仓恢复。
+        仅创建或重置网格结构为“空仓”，让策略可继续正常买入。
+        2. 若未进入隔离模式，保持原有处理：若有实际持仓则先检查盈利、尝试迁移持仓；否则初始化空网格。
+        """
         try:
             print(f"\n初始化网格 - 基准价格: {base_price}")
             if not base_price or base_price <= 0:
@@ -1008,6 +1003,7 @@ class Strategy(StrategyBase):
                 actual_position = position_holding_qty(self.stock)
                 print(f"当前实际持仓: {actual_position}股")
                 
+                # 计算网格价格列表
                 grid_spacing = base_price * self.grid_percentage
                 half_grids = self.grid_num // 2
                 new_grid_prices = []
@@ -1019,32 +1015,12 @@ class Strategy(StrategyBase):
                     down_price = int((base_grid - (i + 1) * grid_spacing) * 10) / 10
                     new_grid_prices.extend([up_price, down_price])
                 new_grid_prices.sort()
-                
-                if actual_position > 0:
-                    # 如果已有持仓，先尝试处理盈利或迁移
-                    if self._check_profit_before_reset(base_price):
-                        print("重置网格前先平掉部分获利仓位")
-                    actual_position = position_holding_qty(self.stock)
-                    if actual_position > 0:
-                        if not self._migrate_positions_to_new_grids(
-                            actual_position,
-                            {k: v for k, v in self.positions.items() if v > 0},
-                            {k: v.copy() for k, v in self.position_records.items() if v.get('quantity', 0) > 0},
-                            new_grid_prices
-                        ):
-                            print("持仓迁移失败，尝试从成交记录恢复")
-                            positions_from_trades = self._get_positions_from_trades()
-                            if positions_from_trades:
-                                self.positions = positions_from_trades['positions']
-                                self.position_records = positions_from_trades['records']
-                                self.total_position = positions_from_trades['total']
-                                self.grid_prices = new_grid_prices
-                            else:
-                                print("无法恢复持仓状态，强制同步实际持仓")
-                                if not self._force_sync_position(actual_position):
-                                    return False
-                else:
-                    # 初始化空网格
+
+                # === 新增：若 ignore_isolation=True，直接跳过对“实际持仓>0”的持仓迁移
+                if self.ignore_isolation:
+                    print("[_initialize_grids] 检测到 ignore_isolation=True，跳过对已持仓的迁移逻辑，使用空网格。")
+
+                    # 初始化或重置空网格
                     self.grid_prices = new_grid_prices
                     self.positions = {}
                     self.position_records = {
@@ -1052,17 +1028,65 @@ class Strategy(StrategyBase):
                         for p in new_grid_prices
                     }
                     self.total_position = 0
-                
-                self._print_grid_status(show_all=True, show_time=False)
 
-                # 如果仓位不满，检查是否有开仓机会
-                if actual_position < self.max_total_position:
-                    current_grid = self._find_nearest_value(base_price, new_grid_prices)
-                    if current_grid and current_grid not in self.positions:
-                        print(f"网格重置后检查到开仓机会: {current_grid:.1f}")
-                        self._place_buy_order(current_grid, base_price)
-                
+                    # 显示网格状态
+                    self._print_grid_status(show_all=True, show_time=False)
+
+                    # 可选：如果仓位不满，检查是否有开仓机会
+                    # 这里 actual_position 不再被策略视为持仓，故只看 self.total_position
+                    if self.total_position < self.max_total_position:
+                        current_grid = self._find_nearest_value(base_price, new_grid_prices)
+                        if current_grid and current_grid not in self.positions:
+                            print(f"[隔离模式] 网格重置后检查到开仓机会: {current_grid:.1f}")
+                            self._place_buy_order(current_grid, base_price)
+
+                else:
+                    # === 如果没有 ignore_isolation，则继续原逻辑 ===
+                    if actual_position > 0:
+                        # 如果已有持仓，先尝试处理盈利或迁移
+                        if self._check_profit_before_reset(base_price):
+                            print("重置网格前先平掉部分获利仓位")
+                        actual_position = position_holding_qty(self.stock)
+                        if actual_position > 0:
+                            if not self._migrate_positions_to_new_grids(
+                                actual_position,
+                                {k: v for k, v in self.positions.items() if v > 0},
+                                {k: v.copy() for k, v in self.position_records.items() if v.get('quantity', 0) > 0},
+                                new_grid_prices
+                            ):
+                                print("持仓迁移失败，尝试从成交记录恢复")
+                                positions_from_trades = self._get_positions_from_trades()
+                                if positions_from_trades:
+                                    self.positions = positions_from_trades['positions']
+                                    self.position_records = positions_from_trades['records']
+                                    self.total_position = positions_from_trades['total']
+                                    self.grid_prices = new_grid_prices
+                                else:
+                                    print("无法恢复持仓状态，强制同步实际持仓")
+                                    if not self._force_sync_position(actual_position):
+                                        return False
+                    else:
+                        # 初始化空网格
+                        self.grid_prices = new_grid_prices
+                        self.positions = {}
+                        self.position_records = {
+                            p: {'buy_price': 0, 'quantity': 0, 'update_time': time.time()}
+                            for p in new_grid_prices
+                        }
+                        self.total_position = 0
+                    
+                    # 显示网格状态
+                    self._print_grid_status(show_all=True, show_time=False)
+
+                    # 如果仓位不满，检查是否有开仓机会
+                    if actual_position < self.max_total_position:
+                        current_grid = self._find_nearest_value(base_price, new_grid_prices)
+                        if current_grid and current_grid not in self.positions:
+                            print(f"网格重置后检查到开仓机会: {current_grid:.1f}")
+                            self._place_buy_order(current_grid, base_price)
+
                 return True
+
         except Exception as e:
             print(f"初始化网格时发生错误: {str(e)}")
             import traceback
@@ -1381,7 +1405,12 @@ class Strategy(StrategyBase):
                     self._print_grid_status(show_all=False, show_time=True)
                     return True
 
-                # 强制同步
+                # 如果验证失败，但我们在隔离模式下，则跳过强制同步
+                if self.ignore_isolation:
+                    print("[隔离模式] 批量更新后持仓不一致，但已忽略强制同步。保持策略持仓与实际持仓不一致。")
+                    return True
+                
+                # 否则执行原先逻辑：强制同步
                 print("批量更新持仓验证失败，尝试强制同步...")
                 if not self._force_sync_position(position_holding_qty(self.stock)):
                     print("强制同步失败，执行回滚")
