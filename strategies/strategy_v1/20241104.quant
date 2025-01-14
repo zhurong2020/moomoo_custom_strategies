@@ -1,270 +1,204 @@
 class Strategy(StrategyBase):
+    """定投与回撤加仓策略优化版本"""
+
     def initialize(self):
-        self.trigger_symbols()
-        self.custom_indicator()
-        self.global_variables()
-        self.positions = []
-        self.total_position = 0
-        self.is_initialized = False
-        self.executed_orders = set()  # 记录已执行订单ID
-        self.executed_trades = set()  # 记录已确认成交ID
-        print("策略初始化完成")
+        """初始化策略"""
+        try:
+            self.trigger_symbols()
+            self.global_variables()
+            self.custom_indicator()
+            self.order_status = {}  # 用于跟踪订单状态
+
+            # 新增：记录当前已触发的最高回撤层级
+            self.current_drawdown_layer = 0
+    
+            print("策略初始化完成")
+        except Exception as e:
+            print(f"初始化失败: {str(e)}")
 
     def trigger_symbols(self):
-        self.stock = declare_trig_symbol()
-        
+        """定义交易标的"""
+        try:
+            self.stock = declare_trig_symbol()
+            print(f"交易标的设置为: {self.stock}")
+        except Exception as e:
+            print(f"交易标的设置失败: {str(e)}")
+
     def custom_indicator(self):
-        self.register_indicator(
-            indicator_name='MA',
-            script='MA5:MA(CLOSE,5),COLORFF8D1E;',
-            param_list=[]
-        )
-        
+        """设置技术指标"""
+        try:
+            self.register_indicator(
+                indicator_name='MA',
+                script='MA5:MA(CLOSE,5),COLORFF8D1E;',
+                param_list=[]
+            )
+            print("技术指标设置完成")
+        except Exception as e:
+            print(f"设置技术指标时发生错误: {str(e)}")
+
     def global_variables(self):
-        # 资金和仓位参数
-        self.initial_capital = show_variable(10000, GlobalType.FLOAT)  
-        self.max_total_position = show_variable(500, GlobalType.INT)   
-        self.grid_trade_size = show_variable(50, GlobalType.INT)       
-        
-        # 网格参数
-        self.grid_height = show_variable(0.03, GlobalType.FLOAT)      # 3%网格间距
-        self.profit_ratio = show_variable(0.02, GlobalType.FLOAT)     # 2%盈利目标
-        
-        # 交易状态记录
-        self.last_trade_time = None
-        self.base_price = None
-
-    def _format_price(self, price):
-        if price is None:
-            return None
-        return int(price * 10) / 10
-
-    def _check_trading_time(self):
-       """检查是否为交易时间"""
-       current_time = device_time(TimeZone.ET)
-       return (current_time.hour == 9 and current_time.minute >= 30) or \
-              (current_time.hour > 9 and current_time.hour < 16)
-
-    def _check_daily_trade_limit(self, current_price):
-        """检查日内交易限制"""
-        current_time = device_time(TimeZone.ET)
-        if self.last_trade_time and \
-            self.last_trade_time.date() == current_time.date():
-            return False
-        return True
-            
-    def _initialize_grid(self, base_price):
-        if not base_price:
-            return False
-            
-        self.base_price = base_price    
-        self.base_grid = self._format_price(base_price)
-        self.upper_grid = self._format_price(base_price * (1 + self.grid_height))
-        self.lower_grid = self._format_price(base_price * (1 - self.grid_height))
-        
-        self.is_initialized = True
-        print(f"网格设置 - 上:{self.upper_grid} 基准:{self.base_grid} 下:{self.lower_grid}")
-        return True
-
-    def _find_grid_type(self, price):
-        if not self.is_initialized:
-            return None
-            
-        if price > self.upper_grid:
-            return 'upper'
-        elif price > self.base_grid:
-            return 'base_to_upper'
-        elif price > self.lower_grid:
-            return 'lower_to_base'
-        else:
-            return 'lower'
-
-    def _load_positions(self):
-        """加载持仓数据"""
+        """初始化全局变量"""
         try:
-            holding_qty = position_holding_qty(symbol=self.stock)
-            if holding_qty > 0:
-                avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
-                current_time = device_time(TimeZone.ET)
-                
-                # 更新持仓记录
-                self.positions = [{
-                    'cost': avg_cost,
-                    'quantity': holding_qty,
-                    'time': current_time,
-                    'date': current_time.date()
-                }]
-                self.total_position = holding_qty
-                print(f"当前持仓: {holding_qty}股 @ {avg_cost}")
-                
-                # 检查并更新基准价格
-                if not self.base_price:
-                    self.base_price = avg_cost
-                    
-            else:
-                self.positions = []
-                self.total_position = 0
-                print("当前无持仓")
-                
+            self.investment_qty = show_variable(1, GlobalType.FLOAT, "每次定投数量（股）")
+            self.support_fractional_shares = show_variable(False, GlobalType.BOOL, "是否支持碎股")
+            self.investment_interval = show_variable(1440, GlobalType.INT, "定投周期（分钟）")
+            self.drawdown_threshold_base = show_variable(5, GlobalType.FLOAT, "基础回撤阈值（%）")
+            self.backtest_mode = show_variable(False, GlobalType.BOOL, "是否启用回测优化模式")
+            self.highest_price = None
+            self.last_investment_time = None
+            self.average_cost = 0.0  # 持仓成本
+            self.last_adjusted_qty = None  # 用于记录上次的加仓数量
+            print("全局变量初始化完成")
         except Exception as e:
-            print(f"加载持仓失败: {str(e)}")
-
-    def _update_position(self, order_id):
-        """更新持仓记录"""
-        try:
-            if order_status(order_id) != OrderStatus.FILLED_ALL:
-                return False
-                
-            # 等待成交数据更新
-            time.sleep(0.5)  # 增加小延时确保成交更新
-            
-            # 重新加载最新持仓
-            self._load_positions()
-            return True
-                
-        except Exception as e:
-            print(f"更新持仓失败: {str(e)}")
-            return False
-            
-    def _update_grid(self, current_price):
-        """动态调整网格"""
-        if not self.base_price:
-            return self._initialize_grid(current_price)
-            
-        price_change = abs(current_price - self.base_price) / self.base_price
-        if price_change > self.grid_height * 2:  # 两倍网格高度时重置
-            print(f"价格变化{price_change*100:.1f}%, 重置网格")
-            return self._initialize_grid(current_price)
-        
-        return True
-
-    def _execute_grid_trades(self, current_price):
-        try:
-            # 检查盈利平仓机会
-            if self.positions:
-                profit_ratio = current_price/self.positions[0]['cost'] - 1
-                if profit_ratio >= self.profit_ratio:
-                    print(f"发现盈利: {self.total_position}股 @ {self.positions[0]['cost']}, 收益率: {profit_ratio*100:.1f}%")
-                    return self._place_order(current_price, self.total_position, False)
-
-            # 检查网格开仓机会
-            if self.total_position < self.max_total_position and \
-            self._check_daily_trade_limit(current_price):
-                
-                # 价格高于上轨，重置网格后买入
-                if current_price >= self.upper_grid:
-                    if self._update_grid(current_price):
-                        print(f"上轨突破买入: 价格{current_price} >= {self.upper_grid}")
-                        return self._place_order(current_price, self.grid_trade_size, True)
-                        
-                # 价格低于下轨，重置网格后买入
-                elif current_price <= self.lower_grid:
-                    if self._update_grid(current_price):
-                        print(f"下轨突破买入: 价格{current_price} <= {self.lower_grid}")
-                        return self._place_order(current_price, self.grid_trade_size, True)
-                        
-                # 价格在网格区间内，基于基准价格判断
-                else:
-                    # 价格高于基准价，买入
-                    if current_price >= self.base_grid:
-                        print(f"价格({current_price})高于基准价({self.base_grid})，买入")
-                        return self._place_order(current_price, self.grid_trade_size, True)
-                    # 价格低于基准价，买入
-                    else:
-                        print(f"价格({current_price})低于基准价({self.base_grid})，买入")
-                        return self._place_order(current_price, self.grid_trade_size, True)
-                
-            return False
-                
-        except Exception as e:
-            print(f"执行网格交易失败: {str(e)}")
-            return False
+            print(f"全局变量设置失败: {str(e)}")
 
     def handle_data(self):
-        """主策略逻辑"""
         try:
-            current_time = device_time(TimeZone.ET)
-            if current_time.hour < 9 or \
-               (current_time.hour == 9 and current_time.minute < 30) or \
-               current_time.hour >= 16:
-                return
-                
-            # 清理前一天的记录
-            if self.last_trade_time and \
-               self.last_trade_time.date() != current_time.date():
-                self.executed_orders.clear()
-                self.executed_trades.clear()
-            
-            self._load_positions()
-            
-            latest_price = current_price(self.stock, price_type=THType.FTH)
-            if not latest_price:
-                return
-                
-            print(f"当前价格: {latest_price}")
-            
-            if not self.is_initialized:
-                if self._initialize_grid(latest_price):
-                    result = self._place_order(latest_price, self.grid_trade_size, True)
-                    if not result:
-                        self.is_initialized = False
-                    return
-                
-            self._execute_grid_trades(latest_price)
-            self._print_position_summary(latest_price)
-            
+            current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+            latest_price, highest_price, account_balance = self.get_market_data()
+
+            # 计算当前回撤
+            drawdown = self.calculate_drawdown(latest_price)
+
+            # 修改重置条件：不重置 last_adjusted_qty
+            if drawdown < 5:
+                self.current_drawdown_layer = 0
+                # 保留 last_adjusted_qty
+
+            # 初始化用于定投的数量为基础数量
+            daily_investment_qty = self.investment_qty
+
+            # 回撤加仓逻辑
+            if self.should_add_position(drawdown):
+                volatility = self.calculate_volatility()  
+                adjusted_qty = self.calculate_investment_qty(
+                    base_qty=self.investment_qty,
+                    drawdown=drawdown,
+                    volatility=volatility,
+                    latest_price=latest_price,
+                    average_cost=self.average_cost
+                )
+                if adjusted_qty > 0:
+                    self.execute_add_position(latest_price, adjusted_qty, account_balance)
+                    # 更新上次调整后的数量和定投数量
+                    self.last_adjusted_qty = adjusted_qty
+                    daily_investment_qty = adjusted_qty
+                else:
+                    # 如果未触发新的加仓但仍在回撤范围内，则使用上次调整的数量
+                    if self.last_adjusted_qty is not None:
+                        daily_investment_qty = self.last_adjusted_qty
+
+            # 定投逻辑：始终执行
+            if self.should_invest(current_time):
+                self.execute_investment(latest_price, account_balance, quantity=daily_investment_qty)
+
         except Exception as e:
             print(f"策略运行错误: {str(e)}")
 
-    def _place_order(self, price, quantity, is_buy=True):
-        """下单并确认成交"""
-        try:
-            limit_price = self._format_price(price)
-            
-            order_id = place_limit(
-                symbol=self.stock,
-                price=limit_price,
-                qty=quantity,
-                side=OrderSide.BUY if is_buy else OrderSide.SELL,
-                time_in_force=TimeInForce.DAY
+    def get_market_data(self):
+        """获取市场数据
+           返回: (最新价, 历史最高价, 账户余额)
+        """
+        if self.backtest_mode:
+            # 回测模式下可模拟数据
+            return 100, 100, 1e6  # 简单模拟：最新价100，最高价100，账户余额100万
+        else:
+            return (
+                current_price(self.stock, price_type=THType.FTH),
+                bar_high(self.stock, bar_type=BarType.D1, select=1),  # 取最近一个交易日的最高价（可根据需求调整）
+                total_cash()  # 账户总资金
             )
-            
-            if not order_id or order_id in self.executed_orders:
-                return False
-                
-            # 等待订单成交
-            for _ in range(20):
-                status = order_status(order_id)
-                if status == OrderStatus.FILLED_ALL:
-                    time.sleep(1)  # 等待成交数据更新
-                    if self._update_position(order_id):
-                        self.last_trade_time = device_time(TimeZone.ET)
-                        self.executed_orders.add(order_id)
-                        return True
-                elif status in [OrderStatus.CANCELLED_ALL, OrderStatus.FAILED]:
-                    return False
-                time.sleep(0.5)
-                
-            return False
-                
-        except Exception as e:
-            print(f"下单失败: {str(e)}")
-            return False
 
-    def _print_position_summary(self, current_price):
-        """打印持仓汇总"""
-        # 先更新一次持仓确保数据最新
-        self._load_positions()
-        
-        if not self.positions:
+    def should_invest(self, current_time):
+        """判断是否进行定投：若从上次定投至今，时间间隔 >= 用户设定的投资周期则触发"""
+        if self.last_investment_time is None:
+            return True
+        elapsed = (current_time - self.last_investment_time).total_seconds() / 60
+        return elapsed >= self.investment_interval
+
+    def execute_investment(self, latest_price, account_balance, quantity=None):
+        invest_qty = quantity if quantity is not None else self.investment_qty
+        if (not self.backtest_mode) and (invest_qty * latest_price > account_balance):
+            print("账户余额不足，无法定投")
             return
-            
-        total_cost = sum(pos['quantity'] * pos['cost'] for pos in self.positions)
-        total_value = self.total_position * current_price
+        order_id = place_market(self.stock, invest_qty, OrderSide.BUY, TimeInForce.DAY)
+        print(f"定投下单成功，订单编号: {order_id}")
+        self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+
+    def calculate_drawdown(self, latest_price):
+        """计算相对历史最高价的回撤幅度（单位：%）"""
+        if self.highest_price is None:
+            self.highest_price = latest_price
+        self.highest_price = max(self.highest_price, latest_price)
+        return (self.highest_price - latest_price) / self.highest_price * 100
+
+    def should_add_position(self, drawdown):
+        """判断是否触发回撤加仓"""
+        # 当回撤超过阈值，即触发加仓
+        return drawdown >= self.calculate_drawdown_threshold()
+
+    def calculate_drawdown_threshold(self):
+        """可以做成固定阈值或动态阈值，示例这里直接使用基础阈值"""
+        return self.drawdown_threshold_base
+
+    def calculate_volatility(self):
+        """
+        从 Moomoo 提供的 historical_volatility 接口获取波动率。
+        如果在回测模式下，则返回一个模拟值。
+        """
+        if self.backtest_mode:
+            # 回测模式可根据实际需要返回固定值或从历史数据自行计算
+            return 1.0
+
+        # 实盘模式：直接调用 Moomoo 的历史波动率接口
+        vol = historical_volatility(
+            symbol=self.stock,
+            period=20,          # 常用 20，表示近 20 根 K 线数据
+            bar_type=BarType.H1,  # 可以改成 D1/H1/等周期
+            select=1
+        )
+        if vol is None:
+            # 若 API 没返回有效数据，可做容错处理
+            vol = 1.0
+        return vol
+
+    def calculate_investment_qty(self, base_qty, drawdown, volatility, latest_price, average_cost):
+        """
+        修订示例：分层加仓 + 避免重复触发
+        每 5% 升一层：0~4.99%为第0层，5~9.99%为第1层，...
+        如果 layer_index <= self.current_drawdown_layer，表示已经加过仓，返回0
+        """
+        import math
+
+        # 分层倍数表，可根据需求修改
+        layers = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5]
+
+        # 算出当前回撤层级
+        layer_index = int(drawdown // 5)  # 5% => 1, 10% =>2, ...
+        if layer_index <= self.current_drawdown_layer:
+            # 已经加过这个层，或者更高层，则此次不再加仓
+            return 0
         
-        if total_cost > 0:
-            total_profit_ratio = (total_value/total_cost - 1) * 100
-            print(f"持仓汇总: {self.total_position}股")
-            print(f"成本: {total_cost:.2f}")
-            print(f"市值: {total_value:.2f}")
-            print(f"盈亏: {(total_value - total_cost):.2f} ({total_profit_ratio:.1f}%)")
+        # 如果回撤层数超过数组最大索引，则固定为最后一层
+        layer_index = min(layer_index, len(layers) - 1)
+
+        # 计算加仓数量
+        add_qty_float = base_qty * layers[layer_index]
+        adjusted_qty = math.ceil(add_qty_float)
+        print(f"目前系统的波动率为： {volatility}")
+
+        # 更新已触发层级
+        self.current_drawdown_layer = layer_index
+
+        return adjusted_qty
+
+    def execute_add_position(self, latest_price, adjusted_qty, account_balance):
+        """执行回撤加仓"""
+        # 若不在回测模式下，需要检查账户余额是否足够
+        if (not self.backtest_mode) and (adjusted_qty * latest_price > account_balance):
+            print("账户余额不足，无法加仓")
+            return
+
+        order_id = place_market(self.stock, adjusted_qty, OrderSide.BUY, TimeInForce.DAY)
+        print(f"加仓下单成功，订单编号: {order_id}")
+        # 如果需要更新平均成本等信息，可以在此处进行额外处理
