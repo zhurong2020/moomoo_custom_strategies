@@ -718,9 +718,11 @@ class Strategy(StrategyBase):
                 
                 else:
                     # === 实盘/模拟盘环境：使用实时成交API进行确认 ===
-                    start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
-                    if self._confirm_order_by_execution(OrderSide.BUY, self.min_order_quantity, start_time):
-                        if self._update_position(grid_price, self.min_order_quantity, buy_price, is_buy=True):
+                    success, avg_price = self._confirm_order_by_execution(OrderSide.BUY, self.min_order_quantity, start_time)
+                    if success:
+                        # 使用实际成交的平均价格进行持仓更新，如果未能获取则回退到最初估算价格
+                        used_price = avg_price if avg_price is not None else buy_price
+                        if self._update_position(grid_price, self.min_order_quantity, used_price, is_buy=True):
                             print(f"[实盘/模拟] 买入订单成交: {buy_order_id}, 网格{grid_price:.1f}持仓更新为: {self.positions[grid_price]}")
                         else:
                             print(f"买入成功但更新持仓失败: {buy_order_id}")
@@ -947,16 +949,17 @@ class Strategy(StrategyBase):
 
     def _confirm_order_by_execution(self, side, expected_qty, start_time, timeout=120, interval=0.5):
         """
-        使用成交ID确认订单是否完全成交
-        每隔 interval 秒调用一次 request_executionid，
-        并统计此时间段内 side=BUY/SELL 的累计成交量，若 >= expected_qty 则视为全部成交
+        使用成交ID确认订单是否完全成交，并返回平均成交价格。
         """
         try:
             accumulated_qty = 0
+            total_weighted_price = 0.0
+            total_qty_collected = 0.0
             end_time = time.time() + timeout
+            attempt = 0
 
             while time.time() < end_time:
-                # 查询从下单时间到当前时间的成交记录
+                attempt += 1
                 execution_ids = request_executionid(
                     symbol=self.stock,
                     start=start_time.strftime('%Y-%m-%d %H:%M:%S'), 
@@ -967,19 +970,26 @@ class Strategy(StrategyBase):
                         if execution_status(eid) == "OK":
                             qty = execution_qty(eid)
                             deal_side = execution_side(eid)
+                            price = execution_price(eid)
                             if deal_side == side:
                                 accumulated_qty += qty
+                                total_weighted_price += price * qty
+                                total_qty_collected += qty
+
+                if attempt % 20 == 0:
+                    print(f"[_confirm_order_by_execution] 尝试次数: {attempt}, 已累计成交量: {accumulated_qty}")
 
                 if accumulated_qty >= expected_qty:
-                    return True
+                    avg_price = (total_weighted_price / total_qty_collected) if total_qty_collected > 0 else None
+                    return True, avg_price
 
                 time.sleep(interval)
 
-            return False
+            return False, None
 
         except Exception as e:
             print(f"_confirm_order_by_execution出错: {str(e)}")
-            return False
+            return False, None
 
     def _initialize_grids(self, base_price):
         """
@@ -1306,8 +1316,8 @@ class Strategy(StrategyBase):
         try:
             with self._position_lock:
                 before_total = self.total_position
-                grid_price = int(grid_price * 10) / 10
-                price = int(price * 10) / 10
+                grid_price = int(grid_price * 10 + 0.5) / 10
+                price = int(price * 10 + 0.5) / 10
                 
                 if is_buy:
                     current_pos = self.positions.get(grid_price, 0)
