@@ -138,60 +138,60 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"发送告警时发生错误: {str(e)}")
 
-        def _recover_positions(self):
-            """
-            恢复已有持仓状态，在策略重启时直接执行手动隔离模式。
-            """
-            try:
-                actual_position = position_holding_qty(self.stock)
-                if actual_position == 0:
-                    return True
-
-                print(f"检测到已有持仓{actual_position}股，执行手动隔离模式。")
-                print("直接隔离所有持仓，不尝试从成交记录恢复持仓状态。")
-
-                # 尝试通过成交记录获取持仓详细信息用于隔离显示
-                positions_from_trades = self._get_positions_from_trades()
-                if positions_from_trades:
-                    self.manual_positions = positions_from_trades['positions'].copy()
-                    self.manual_records = positions_from_trades['records'].copy()
-                else:
-                    # 若无法从成交记录恢复，则以当前价格和实际持仓简单记录
-                    current_px = current_price(self.stock)
-                    avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
-                    if not avg_cost:
-                        avg_cost = current_px
-                    self.manual_positions = {current_px: actual_position}
-                    self.manual_records = {
-                        current_px: {
-                            'buy_price': avg_cost,
-                            'quantity': actual_position,
-                            'update_time': time.time()
-                        }
-                    }
-
-                # 清空策略自身的网格持仓相关数据
-                self.positions = {}
-                self.position_records = {}
-                self.high_positions = {}
-                self.high_records = {}
-                self.total_position = 0
-
-                print("已将所有持仓隔离到 manual_positions，策略持仓清空，从零开始。")
-                self._print_manual_positions()
-
-                self.ignore_isolation = True
-                print("已开启 ignore_isolation=True，后续将不再试图校准持仓。")
-
-                self.is_initialized = True
+    def _recover_positions(self):
+        """
+        恢复已有持仓状态，在策略重启时直接执行手动隔离模式。
+        """
+        try:
+            actual_position = position_holding_qty(self.stock)
+            if actual_position == 0:
                 return True
 
-            except Exception as e:
-                print(f"恢复持仓状态时发生错误: {str(e)}")
-                import traceback
-                print(traceback.format_exc())
-                return False
-            
+            print(f"检测到已有持仓{actual_position}股，执行手动隔离模式。")
+            print("直接隔离所有持仓，不尝试从成交记录恢复持仓状态。")
+
+            # 尝试通过成交记录获取持仓详细信息用于隔离显示
+            positions_from_trades = self._get_positions_from_trades()
+            if positions_from_trades:
+                self.manual_positions = positions_from_trades['positions'].copy()
+                self.manual_records = positions_from_trades['records'].copy()
+            else:
+                # 若无法从成交记录恢复，则以当前价格和实际持仓简单记录
+                current_px = current_price(self.stock)
+                avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+                if not avg_cost:
+                    avg_cost = current_px
+                self.manual_positions = {current_px: actual_position}
+                self.manual_records = {
+                    current_px: {
+                        'buy_price': avg_cost,
+                        'quantity': actual_position,
+                        'update_time': time.time()
+                    }
+                }
+
+            # 清空策略自身的网格持仓相关数据
+            self.positions = {}
+            self.position_records = {}
+            self.high_positions = {}
+            self.high_records = {}
+            self.total_position = 0
+
+            print("已将所有持仓隔离到 manual_positions，策略持仓清空，从零开始。")
+            self._print_manual_positions()
+
+            self.ignore_isolation = True
+            print("已开启 ignore_isolation=True，后续将不再试图校准持仓。")
+
+            self.is_initialized = True
+            return True
+
+        except Exception as e:
+            print(f"恢复持仓状态时发生错误: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+        
     def _print_manual_positions(self):
         """打印手动/隔离仓位分布"""
         if not self.manual_positions:
