@@ -1,5 +1,5 @@
 class Strategy(StrategyBase):
-    """网格交易策略V5.3 - 支持超限隔离模式，使用成交API等问题"""
+    """网格交易策略V5.3.1 - 重启策略后有持仓就手动隔离，使用成交API"""
 
     def initialize(self):
         """初始化策略"""
@@ -138,90 +138,59 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"发送告警时发生错误: {str(e)}")
 
-    def _recover_positions(self):
-        """
-        恢复已有持仓状态，优先从成交记录恢复
-        """
-        try:
-            actual_position = position_holding_qty(self.stock)
-            if actual_position == 0:
+        def _recover_positions(self):
+            """
+            恢复已有持仓状态，在策略重启时直接执行手动隔离模式。
+            """
+            try:
+                actual_position = position_holding_qty(self.stock)
+                if actual_position == 0:
+                    return True
+
+                print(f"检测到已有持仓{actual_position}股，执行手动隔离模式。")
+                print("直接隔离所有持仓，不尝试从成交记录恢复持仓状态。")
+
+                # 尝试通过成交记录获取持仓详细信息用于隔离显示
+                positions_from_trades = self._get_positions_from_trades()
+                if positions_from_trades:
+                    self.manual_positions = positions_from_trades['positions'].copy()
+                    self.manual_records = positions_from_trades['records'].copy()
+                else:
+                    # 若无法从成交记录恢复，则以当前价格和实际持仓简单记录
+                    current_px = current_price(self.stock)
+                    avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+                    if not avg_cost:
+                        avg_cost = current_px
+                    self.manual_positions = {current_px: actual_position}
+                    self.manual_records = {
+                        current_px: {
+                            'buy_price': avg_cost,
+                            'quantity': actual_position,
+                            'update_time': time.time()
+                        }
+                    }
+
+                # 清空策略自身的网格持仓相关数据
+                self.positions = {}
+                self.position_records = {}
+                self.high_positions = {}
+                self.high_records = {}
+                self.total_position = 0
+
+                print("已将所有持仓隔离到 manual_positions，策略持仓清空，从零开始。")
+                self._print_manual_positions()
+
+                self.ignore_isolation = True
+                print("已开启 ignore_isolation=True，后续将不再试图校准持仓。")
+
+                self.is_initialized = True
                 return True
 
-            latest_price = current_price(self.stock)
-            if not latest_price:
-                print("无法获取当前价格，恢复失败")
+            except Exception as e:
+                print(f"恢复持仓状态时发生错误: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
                 return False
-
-            # 从成交记录恢复
-            positions_from_trades = self._get_positions_from_trades()
-            if positions_from_trades:
-                self.positions = positions_from_trades['positions']
-                self.position_records = positions_from_trades['records']
-                self.total_position = positions_from_trades['total']
-                
-                # 先做一次验证 (可能会打印警告, 但不会停止)
-                if not self._verify_positions():
-                    print("首次持仓验证失败，尝试强制同步或其他逻辑")
-                    # 这里你可以继续调用 self._force_sync_position(...) 或直接 return False
-                    return False
-
-                # === 20250113核心新增逻辑：若持仓总量 > 上限，则把全部仓位隔离 ===
-                if self.total_position > self.max_total_position:
-                    print(
-                        f"检测到超限持仓: 总持仓={self.total_position} > "
-                        f"上限={self.max_total_position}，将全部隔离到 manual_positions。"
-                    )
-                    
-                    # 1. 先复制策略仓位
-                    self.manual_positions = self.positions.copy()
-                    self.manual_records = self.position_records.copy()
-
-                    # 2. 如果有高位网格，也一并复制到手动
-                    if self.high_positions:
-                        for k, v in self.high_positions.items():
-                            if v > 0:
-                                self.manual_positions.setdefault(k, 0)
-                                self.manual_positions[k] += v
-                        for k, v in self.high_records.items():
-                            self.manual_records[k] = v.copy()
-
-                    # 3. 清空策略自身的网格持仓
-                    self.positions = {}
-                    self.position_records = {}
-                    self.high_positions = {}
-                    self.high_records = {}
-                    self.total_position = 0
-                    
-                    print("已将所有持仓划入 manual_positions，策略持仓清空，从零开始。")
-                    self._print_manual_positions()
-
-                    # === 20250113新增 ===
-                    self.ignore_isolation = True
-                    print("已开启 ignore_isolation=True，后续将不再试图校准持仓。")
-                    
-                    self.is_initialized = True
-                    return True
-                
-                # 如果持仓 <= 上限，则正常完成
-                if self._verify_positions():
-                    self.is_initialized = True
-                    return True
-                else:
-                    return False
-
-            else:
-                # 如果无法从成交记录恢复，就基于当前价格强制同步(看你原先逻辑怎么写)
-                if self._force_sync_position(actual_position):
-                    if self._verify_positions():
-                        self.is_initialized = True
-                        return True
-                return False
-
-        except Exception as e:
-            print(f"恢复持仓状态时发生错误: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            return False
             
     def _print_manual_positions(self):
         """打印手动/隔离仓位分布"""
