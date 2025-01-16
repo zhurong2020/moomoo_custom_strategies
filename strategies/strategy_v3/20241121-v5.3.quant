@@ -37,22 +37,22 @@ class Strategy(StrategyBase):
             self.trigger_symbols()
             self.custom_indicator()
             self.global_variables()
-            print("标准初始化完成")
+            print("[初始化完成]，网格交易策略V5.3.1已启动，完成所有必要设置")
             
             # 检查是否有未处理的持仓
             actual_position = position_holding_qty(self.stock)
             if actual_position > 0:
-                print(f"检测到已有持仓{actual_position}股，尝试恢复持仓状态")
+                print(f"[持仓检测] 检测到当前账户已有持仓：{actual_position}股，正在尝试恢复状态")
                 if self._recover_positions():
                     print("持仓状态恢复成功，继续执行策略")
                 else:
                     print("持仓状态恢复失败，停止策略")
                     return
 
-            print("策略初始化完成")
+            print("[初始化完成] 网格交易策略V5.3.1已准备就绪，开始运行")
             
         except Exception as e:
-            print(f"策略初始化发生错误: {str(e)}")
+            print(f"网格交易策略V5.3.1初始化发生错误: {str(e)}")
             import traceback
             print(traceback.format_exc())
 
@@ -60,7 +60,7 @@ class Strategy(StrategyBase):
         """定义交易标的"""
         try:
             self.stock = declare_trig_symbol()
-            print("交易标的设置完成")
+            print(f"[标的设置完成] 当前交易标的为：{self.stock}")
         except Exception as e:
             print(f"设置交易标的时发生错误: {str(e)}")
 
@@ -72,7 +72,7 @@ class Strategy(StrategyBase):
                 script='MA5:MA(CLOSE,5),COLORFF8D1E;',
                 param_list=[]
             )
-            print("技术指标设置完成")
+            print("[技术指标初始化完成] 已成功加载自定义技术指标")
         except Exception as e:
             print(f"设置技术指标时发生错误: {str(e)}")
 
@@ -148,7 +148,7 @@ class Strategy(StrategyBase):
                 return True
 
             print(f"检测到已有持仓{actual_position}股，执行手动隔离模式。")
-            print("直接隔离所有持仓，不尝试从成交记录恢复持仓状态。")
+            print("[隔离模式] 所有现有持仓已转移至手动隔离区域，不参与策略操作")
 
             # 尝试通过成交记录获取持仓详细信息用于隔离显示
             positions_from_trades = self._get_positions_from_trades()
@@ -177,11 +177,11 @@ class Strategy(StrategyBase):
             self.high_records = {}
             self.total_position = 0
 
-            print("已将所有持仓隔离到 manual_positions，策略持仓清空，从零开始。")
+            print("[隔离模式] 已清空策略持仓记录，重新开始运行")
             self._print_manual_positions()
 
             self.ignore_isolation = True
-            print("已开启 ignore_isolation=True，后续将不再试图校准持仓。")
+            print("已开启[隔离模式]，本周期内将不再试图校准持仓。")
 
             self.is_initialized = True
             return True
@@ -409,7 +409,7 @@ class Strategy(StrategyBase):
         """
         # 如果忽略隔离，则直接pass
         if self.ignore_isolation:
-            print("检测到 ignore_isolation=True，跳过持仓修正流程，让策略保持与实际持仓不一致。")
+            print("检测到隔离模式，跳过持仓修正流程，让策略单独运行。")
             return True
             
         try:
@@ -658,7 +658,8 @@ class Strategy(StrategyBase):
                 if not buy_price:
                     buy_price = latest_price
                         
-                print(f"执行买入: 网格={grid_price:.1f} 数量={self.min_order_quantity} @ {buy_price:.1f}")
+                print(f"[订单提交] 尝试买入 {self.stock}：网格价格 {grid_price:.1f}，数量 {self.min_order_quantity}股，预期价格 {buy_price:.1f}")
+
                 buy_order_id = place_market(
                     symbol=self.stock,
                     qty=self.min_order_quantity,
@@ -692,7 +693,7 @@ class Strategy(StrategyBase):
                         # 使用实际成交的平均价格进行持仓更新，如果未能获取则回退到最初估算价格
                         used_price = avg_price if avg_price is not None else buy_price
                         if self._update_position(grid_price, self.min_order_quantity, used_price, is_buy=True):
-                            print(f"[实盘/模拟] 买入订单成交: {buy_order_id}, 网格{grid_price:.1f}持仓更新为: {self.positions[grid_price]}")
+                            print(f"[订单成交] 成功买入 {self.stock}，网格价格 {grid_price:.1f}，更新后网格持仓：{self.positions[grid_price]}股")
                         else:
                             print(f"买入成功但更新持仓失败: {buy_order_id}")
                             return False
@@ -1075,69 +1076,79 @@ class Strategy(StrategyBase):
     def _print_grid_status(self, show_all=True, show_time=False):
         """打印网格状态"""
         try:
-            print("\n网格状态:")
+            print("\n[网格状态更新]")
+
+            # 获取最新价格
             latest_price = current_price(self.stock)
 
+            # 打印活动网格状态
+            print("[活动网格状态]:")
             if show_all:
+                # 遍历所有网格，包括无持仓网格
                 for grid in sorted(self.grid_prices):
                     pos = self.positions.get(grid, 0)
                     record = self.position_records.get(grid, {})
-                    status_str = f"网格 {grid:.1f}: 持仓={pos}, 成本={record.get('buy_price', 0):.1f}"
-                    
-                    if pos > 0 and latest_price:
-                        profit = (latest_price - record.get('buy_price', 0)) * pos
-                        profit_pct = ((latest_price - record.get('buy_price', 0)) 
-                                      / record.get('buy_price', 0) * 100 if record.get('buy_price', 0) else 0)
-                        status_str += f", 盈亏={profit:.2f}({profit_pct:.1f}%)"
-                    
-                    if show_time and pos > 0:
-                        update_time = record.get('update_time', 0)
-                        if update_time:
-                            time_str = time.strftime('%H:%M:%S', time.localtime(update_time))
-                            status_str += f", 更新时间={time_str}"
+                    status_str = self._format_grid_status(grid, pos, record, latest_price, show_time)
                     print(status_str)
             else:
+                # 仅打印有持仓的网格
                 for grid_price, qty in sorted(self.positions.items()):
                     if qty > 0:
                         record = self.position_records.get(grid_price, {})
-                        status_str = f"网格 {grid_price:.1f}: 持仓={qty}, 成本={record.get('buy_price', 0):.1f}"
-                        if latest_price:
-                            profit = (latest_price - record.get('buy_price', 0)) * qty
-                            profit_pct = ((latest_price - record.get('buy_price', 0)) 
-                                          / record.get('buy_price', 0) * 100 if record.get('buy_price', 0) else 0)
-                            status_str += f", 盈亏={profit:.2f}({profit_pct:.1f}%)"
-                        
-                        if show_time:
-                            update_time = record.get('update_time', 0)
-                            if update_time:
-                                time_str = time.strftime('%H:%M:%S', time.localtime(update_time))
-                                status_str += f", 更新时间={time_str}"
+                        status_str = self._format_grid_status(grid_price, qty, record, latest_price, show_time)
                         print(status_str)
 
+            # 打印高位网格状态
             if self.high_positions:
-                print("\n高位网格状态:")
-                for grid in sorted(self.high_positions.keys()):
-                    qty = self.high_positions[grid]
+                print("\n[高位网格状态]:")
+                for grid, qty in sorted(self.high_positions.items()):
                     if qty > 0 or show_all:
                         record = self.high_records.get(grid, {})
-                        status_str = f"网格 {grid:.1f}: 持仓={qty}, 成本={record.get('buy_price', 0):.1f}"
-                        if qty > 0 and latest_price:
-                            profit = (latest_price - record.get('buy_price', 0)) * qty
-                            profit_pct = ((latest_price - record.get('buy_price', 0)) 
-                                          / record.get('buy_price', 0) * 100 if record.get('buy_price', 0) else 0)
-                            status_str += f", 盈亏={profit:.2f}({profit_pct:.1f}%)"
-                        if show_time and qty > 0:
-                            update_time = record.get('update_time', 0)
-                            if update_time:
-                                time_str = time.strftime('%H:%M:%S', time.localtime(update_time))
-                                status_str += f", 更新时间={time_str}"
+                        status_str = self._format_grid_status(grid, qty, record, latest_price, show_time, high_position=True)
                         print(status_str)
-            
+
+            # 打印总持仓和市值
             total_value = latest_price * self.total_position if latest_price else 0
-            print(f"总持仓: {self.total_position}, 总市值: {total_value:.2f}")
-            
+            print(f"\n[总持仓]: {self.total_position}股 [总市值]: {total_value:.2f} USD")
+
         except Exception as e:
             print(f"打印网格状态时发生错误: {str(e)}")
+
+    def _format_grid_status(self, grid, pos, record, latest_price, show_time, high_position=False):
+        """
+        格式化网格状态字符串
+        Args:
+            grid (float): 网格价格
+            pos (int): 持仓数量
+            record (dict): 网格的交易记录
+            latest_price (float): 当前价格
+            show_time (bool): 是否显示更新时间
+            high_position (bool): 是否为高位网格
+        Returns:
+            str: 格式化后的网格状态
+        """
+        # 基础信息
+        status_str = f"网格 {grid:.1f}: 持仓={pos}, 成本={record.get('buy_price', 0):.1f}"
+        
+        # 盈亏计算
+        if pos > 0 and latest_price:
+            profit = (latest_price - record.get('buy_price', 0)) * pos
+            profit_pct = ((latest_price - record.get('buy_price', 0)) 
+                        / record.get('buy_price', 0) * 100 if record.get('buy_price', 0) else 0)
+            status_str += f", 盈亏={profit:.2f}({profit_pct:.1f}%)"
+
+        # 更新时间
+        if show_time and pos > 0:
+            update_time = record.get('update_time', 0)
+            if update_time:
+                time_str = time.strftime('%H:%M:%S', time.localtime(update_time))
+                status_str += f", 更新时间={time_str}"
+
+        # 标注高位网格
+        if high_position:
+            status_str = "[高位] " + status_str
+
+        return status_str
 
     def _execute_high_grid_sell(self, profitable_grids, current_price):
         """执行高位网格平仓操作，使用成交API"""
