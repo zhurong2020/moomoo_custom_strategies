@@ -1,11 +1,16 @@
 class Strategy(StrategyBase):
-    """网格交易策略V5.3.2 - 重启策略后有持仓就手动隔离，使用成交API
-    20250116 修改部分print提示，拆分_print_grid_status方法
+    """网格交易策略V5.3.2 - 重启策略后有持仓就手动隔离，实盘使用成交API查询
+    关于如何使用Moomoo中的量化交易，可以关注“有心言者”微信公众号中的介绍。
+    完整的Moomoo量化交易指南请移步我的博客“https://zhurong2020.github.io/”。
+    需要下载Moomoo量化策略的，请查看以上相关文章链接，或直接到我的Github仓库：“https://github.com/znhskzj/moomoo_custom_strategies”。
+    量化交易有风险，投资需谨慎，请务必结合个人风险承受能力做出决策。
+    风险提示：使用本策略进行交易，风险自担。请仔细阅读README文件中的详细风险说明。
     """
 
     def initialize(self):
         """初始化策略"""
         import threading
+        STRATEGY_VERSION = "v5.3.2"
         try:
             self._position_lock = threading.RLock()
             self._order_lock = threading.RLock()
@@ -39,7 +44,7 @@ class Strategy(StrategyBase):
             self.trigger_symbols()
             self.custom_indicator()
             self.global_variables()
-            print("[初始化完成]，网格交易策略V5.3.1已启动，完成所有必要设置")
+            print("[初始化完成]，网格交易策略{STRATEGY_VERSION}已启动，完成所有必要设置")
             
             # 检查是否有未处理的持仓
             actual_position = position_holding_qty(self.stock)
@@ -51,10 +56,10 @@ class Strategy(StrategyBase):
                     print("持仓状态恢复失败，停止策略")
                     return
 
-            print("[初始化完成] 网格交易策略V5.3.1已准备就绪，开始运行")
+            print("[初始化完成] 网格交易策略{STRATEGY_VERSION}已准备就绪，开始运行")
             
         except Exception as e:
-            print(f"网格交易策略V5.3.1初始化发生错误: {str(e)}")
+            print(f"网格交易策略{STRATEGY_VERSION}初始化发生错误: {str(e)}")
             import traceback
             print(traceback.format_exc())
 
@@ -714,6 +719,7 @@ class Strategy(StrategyBase):
         从历史成交记录中恢复持仓分布（改用 execution_* API，不再使用 order_*）
         若恢复成功，返回 {'positions':..., 'records':..., 'total':...}，否则返回 None
         """
+        import datetime
         try:
             print("\n=== 从成交记录恢复持仓状态 ===")
             actual_position = position_holding_qty(self.stock)
@@ -722,9 +728,15 @@ class Strategy(StrategyBase):
                 return None
             print(f"当前实际持仓: {actual_position}股")
 
-            # 获取最近 N 天成交记录
-            # 此处仅示例：start/end可以根据 self.trade_record_days 来动态计算
-            execution_ids = request_executionid(symbol=self.stock)  
+            today = device_time(TimeZone.DEVICE_TIME_ZONE).date()
+            start_date = today - datetime.timedelta(days=self.trade_record_days)
+            end_date = today  # 或者再 +1 天也行
+
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = end_date.strftime("%Y-%m-%d")
+
+            print(f"查询区间: {start_str} ~ {end_str} (共{self.trade_record_days}天)")
+            execution_ids = request_executionid(symbol=self.stock, start=start_str, end=end_str)
             if not execution_ids:
                 print("无法获取成交记录")
                 return None
@@ -919,11 +931,13 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"清理高位网格时发生错误: {str(e)}")
 
-    def _confirm_order_by_execution(self, side, expected_qty, start_time, timeout=120, interval=0.5):
+    def _confirm_order_by_execution(self, side, expected_qty, start_time, timeout=300, interval=2):
         """
         使用成交ID确认订单是否完全成交，并返回平均成交价格。
         """
+        import datetime
         try:
+            query_start_time = (start_time - datetime.timedelta(minutes=2)).strftime('%Y-%m-%d %H:%M:%S')
             accumulated_qty = 0
             total_weighted_price = 0.0
             total_qty_collected = 0.0
@@ -934,8 +948,8 @@ class Strategy(StrategyBase):
                 attempt += 1
                 execution_ids = request_executionid(
                     symbol=self.stock,
-                    start=start_time.strftime('%Y-%m-%d %H:%M:%S'), 
-                    end=time.strftime('%Y-%m-%d %H:%M:%S')
+                    start=query_start_time, 
+                    end=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 )
                 if execution_ids:
                     for eid in execution_ids:
