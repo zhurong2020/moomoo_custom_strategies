@@ -1,8 +1,8 @@
 class Strategy(StrategyBase):
-    """网格交易策略V5.3.4 - 重启策略后隔离原仓位，成交API查询，添加介绍文章入口，拆分_get_positions_from_trades和_print_grid_status，解决实际成交价与记录成本价不一致
-    关于如何使用Moomoo中的量化交易，可以关注“有心言者”微信公众号中的介绍。
-    完整的Moomoo量化交易指南请移步我的博客“https://zhurong2020.github.io/”。
-    需要下载Moomoo量化策略的，请查看以上相关文章链接，或直接到我的Github仓库：“https://github.com/znhskzj/moomoo_custom_strategies”。
+    """网格交易策略V5.3.5 - 重启策略后隔离原仓位，成交API查询，添加介绍文章入口，拆分_get_positions_from_trades和_print_grid_status，解决实际成交价与记录成本价不一致
+    关于如何使用Moomoo中的量化交易，可以关注"有心言者"微信公众号中的介绍。
+    完整的Moomoo量化交易指南请移步我的博客"https://zhurong2020.github.io/"。
+    需要下载Moomoo量化策略的，请查看以上相关文章链接，或直接到我的Github仓库："https://github.com/znhskzj/moomoo_custom_strategies"。
     量化交易有风险，投资需谨慎，请务必结合个人风险承受能力做出决策。
     风险提示：使用本策略进行交易，风险自担。请仔细阅读README文件中的详细风险说明。
     """
@@ -10,7 +10,7 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略"""
         import threading
-        STRATEGY_VERSION = "v5.3.4"
+        STRATEGY_VERSION = "v5.3.5"
         try:
             self._position_lock = threading.RLock()
             self._order_lock = threading.RLock()
@@ -101,7 +101,7 @@ class Strategy(StrategyBase):
             self.position_sync_retry = show_variable(3, GlobalType.INT, "持仓同步重试次数")
             self.is_backtest = show_variable(False, GlobalType.BOOL, "是否回测环境")
         
-            # === 20250117修改：可选增加一个开关，决定“网格重置后是否立即尝试买入” ===
+            # === 20250117修改：可选增加一个开关，决定"网格重置后是否立即尝试买入" ===
             self.buy_after_reset = show_variable(True, GlobalType.BOOL, "网格重置后立即尝试开仓")
             # === 20250117修改：可选增加一个开关，减少日志冗余 ===
             self.verbose_log = show_variable(True, GlobalType.BOOL, "是否输出详细调试日志")
@@ -114,7 +114,7 @@ class Strategy(StrategyBase):
     def check_strategy_status(self):
         """
         检查策略运行状态
-        1. 对比 actual_position 与 self.total_position，如不一致，则先做一次“从成交查询”校准
+        1. 对比 actual_position 与 self.total_position，如不一致，则先做一次"从成交查询"校准
         2. 如果仍不一致，就告警并返回False
         """
         try:
@@ -652,13 +652,18 @@ class Strategy(StrategyBase):
         执行买入订单，区分回测或实盘/模拟环境
         20250127 把更新持仓逻辑放在确认成交后执行
         """
+        import time
         try:
+            # 计算价格偏移量
+            price_offset = 0.01  # 可以根据需要调整偏移量
+            adjusted_price = latest_price - price_offset
+
             # 检查当前网格是否已存在持仓
             current_pos = self.positions.get(grid_price, 0)
             if current_pos >= self.position_limit:
                 print(f"网格{grid_price:.1f}持仓{current_pos}已达上限{self.position_limit}")
                 return False
-                        
+
             # 检查总持仓限制
             if self.total_position >= self.max_total_position:
                 print(f"总持仓{self.total_position}已达上限{self.max_total_position}")
@@ -666,13 +671,14 @@ class Strategy(StrategyBase):
 
             with self._order_lock:
                 start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
-                    
-                # 获取实时买入价格 (仅在实盘用)，如果拿不到则用latest_price替代
-                ask_price = ask(self.stock, level=1)  
+
+                # 获取实时买入价格 (仅在实盘用)，如果拿不到则用adjusted_price替代
+                ask_price = ask(self.stock, level=1)
                 if not ask_price:
-                    ask_price = latest_price
-                    
-                trade_qty = self.min_order_quantity
+                    ask_price = adjusted_price
+
+                # 计算交易数量
+                trade_qty = self._calculate_trade_quantity(grid_price)
 
                 print(f"[订单提交] 尝试买入 {self.stock}：网格价格 {grid_price:.1f}，数量 {trade_qty}股，预期价格 {ask_price:.2f}")
 
@@ -705,6 +711,9 @@ class Strategy(StrategyBase):
                     }
                     self.pending_orders.add(buy_order_id)
 
+                    # 强制等待5秒给市场撮合，让订单先成交，然后再进入"循环查询"逻辑
+                    time.sleep(5)
+
                     # 【修改】不再在这里直接调用 _update_position
                     # 先等待真正的成交均价
                     success, avg_price = self._confirm_order_by_execution(
@@ -727,7 +736,7 @@ class Strategy(StrategyBase):
                         # 只有在拿到 avg_price 后才更新持仓
                         if self._update_position(grid_price, trade_qty, used_price, is_buy=True):
                             print(f"[订单成交] 成功买入 {self.stock}，网格 {grid_price:.1f}，"
-                                f"成交价 {used_price:.2f}，网格持仓={self.positions[grid_price]}")
+                                f"成交价 {used_price:.2f}, 网格持仓={self.positions[grid_price]}")
                             return True
                         else:
                             print(f"[订单成交] 但更新持仓失败: {buy_order_id}")
@@ -899,8 +908,8 @@ class Strategy(StrategyBase):
         # 1. 生成网格价格列表（sort以后，最大值必然是最后一个元素）
         grid_prices = [base_grid]
         for i in range(half_grids):
-            up_price = int((base_grid + (i + 1) * grid_spacing) * 10) / 10
-            down_price = int((base_grid - (i + 1) * grid_spacing) * 10) / 10
+            up_price = int((base_grid + (i + 1) * grid_spacing) * 10 / 10
+            down_price = int((base_grid - (i + 1) * grid_spacing) * 10 / 10
             grid_prices.extend([up_price, down_price])
         grid_prices.sort()
 
@@ -1015,9 +1024,9 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"清理高位网格时发生错误: {str(e)}")
 
-    def _confirm_order_by_execution(self, side, expected_qty, start_time, timeout=300, interval=2):
+    def _confirm_order_by_execution(self, side, expected_qty, start_time, timeout=120, interval=10):
         """
-        使用成交ID确认订单是否完全成交，并返回平均成交价格。
+        使用成交ID确认订单是否完全成交，并返回平均成交价格，timeout=120为若超过2分钟还没有拿到成交量就放弃，interval=10为每隔10秒查看订单是否成交。
         """
         import datetime
         try:
@@ -1106,7 +1115,7 @@ class Strategy(StrategyBase):
 
                 new_grid_prices.sort()
 
-                # === 先决定要不要在这里做“_check_profit_before_reset” ===
+                # === 先决定要不要在这里做"_check_profit_before_reset" ===
                 # 可以注释掉以避免重复卖出
                 if not self.ignore_isolation and actual_position > 0:
                     # 若你仍想在重置前卖出，则保留：
@@ -1294,6 +1303,7 @@ class Strategy(StrategyBase):
         """
         执行批量卖出操作，区分回测 or 实盘。
         """
+        import time
         try:
             total_quantity = sum(grid[1] for grid in profitable_grids)
             if not self._can_trade_in_period(None, is_buy=False):
@@ -1334,6 +1344,9 @@ class Strategy(StrategyBase):
                     'qty': total_quantity
                 }
                 self.pending_orders.add(sell_order_id)
+                
+                # 强制等待5秒给市场撮合，让订单先成交，然后再进入"循环查询"逻辑
+                time.sleep(5)
 
                 start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
                 ok, avg_price = self._confirm_order_by_execution(
@@ -1570,3 +1583,17 @@ class Strategy(StrategyBase):
             except Exception as e:
                 print(f"批量更新持仓失败: {str(e)}")
                 return False
+
+    def _calculate_trade_quantity(self, grid_price):
+        """根据网格层级计算交易数量"""
+        # 定义金字塔加仓数列
+        pyramid_sequence = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+        base_quantity = self.min_order_quantity
+
+        # 计算当前网格的层级
+        grid_index = self.grid_prices.index(grid_price)
+        sequence_index = min(grid_index, len(pyramid_sequence) - 1)
+
+        # 计算交易数量
+        trade_quantity = base_quantity * pyramid_sequence[sequence_index]
+        return trade_quantity
