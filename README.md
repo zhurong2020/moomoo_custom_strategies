@@ -41,6 +41,10 @@ This project is for educational and research purposes only. Please be aware:
 - 支持批量订单执行
 - 完善的持仓验证和自动修正系统
 - 详细的运行日志和错误处理
+- 支持隔离模式（默认开启）实现策略与实际持仓分离
+- 价格区间限制功能，增强风险控制
+- 金字塔加仓策略支持
+- 最新版本：v5.3.8
 
 ### [Strategy V2](./strategies/strategy_v2/readme.md)
 - 简化的网格重置逻辑
@@ -69,11 +73,21 @@ This project is for educational and research purposes only. Please be aware:
   - `changelog.md`: 版本更新记录
 - `historical_orders/`: 历史订单记录
 - `strategies/`: 策略实现目录
+  - `strategy_v3/`: 最新的网格交易策略（v5.3.8），支持隔离模式和价格区间限制
+  - `strategy_v2/`: 简化版网格交易策略
+  - `strategy_v1/`: 基础网格交易策略
 - `tools/`: 工具集目录
 
 ## 版本控制
 
 每个策略版本都有独立的目录和配置文件，便于进行版本管理和策略回溯。详细的更新记录请参考 [changelog](./docs/changelog.md)。
+
+## 最新更新（v5.3.8）
+
+- 默认启用隔离模式，更好地处理持仓同步问题
+- 增加价格区间限制功能，增强风险控制
+- 改进持仓统计和验证机制
+- 优化策略文档和使用说明
 
 ## License
 
