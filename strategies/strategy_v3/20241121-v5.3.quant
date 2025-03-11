@@ -1,6 +1,5 @@
 class Strategy(StrategyBase):
-    """网格交易策略V5.3.6 - 合并部分功能重叠函数
-    最近更新20250209
+    """网格交易策略V5.3.8 -  添加隔离模式，默认为真，修订价格区间、持仓统计等错误。
     关于如何使用Moomoo中的量化交易，可以关注"有心言者"微信公众号中的介绍。
     完整的Moomoo量化交易指南请移步我的博客"https://zhurong2020.github.io/"。
     需要下载Moomoo量化策略的，请查看以上相关文章链接，或直接到我的Github仓库："https://github.com/znhskzj/moomoo_custom_strategies"。
@@ -11,7 +10,7 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略20250208"""
         import threading
-        STRATEGY_VERSION = "v5.3.5"
+        STRATEGY_VERSION = "v5.3.8"
         try:
             self._position_lock = threading.RLock()
             # self._order_lock = threading.RLock()
@@ -20,47 +19,45 @@ class Strategy(StrategyBase):
             self.positions = {}          # 记录每个网格的持仓
             self.grid_prices = []        # 存储网格价格
             self.position_records = {}   # 记录每个网格的交易详情
-            self.total_position = 0      # 总持仓跟踪
             self.high_positions = {}     # 记录高位网格的持仓
             self.high_records = {}       # 记录高位网格的交易详情
-
-            # === 20250113：手动/隔离仓位记录和隔离标志 ===
-            self.manual_positions = {}   # 仅做保存，不让策略后续操作
-            self.manual_records = {}
-            self.ignore_isolation = False
-
-            self.is_initialized = False
-            self.last_trade_time = None  # 上次交易时间记录
-            self.pending_orders = set()  # 跟踪待处理订单
-            self.order_records = {}      # 记录本策略的所有订单信息
-            self.start_time = device_time(TimeZone.DEVICE_TIME_ZONE)  # 记录策略启动时间
+            self.manual_positions = {}   # 记录手动持仓(隔离模式)
+            self.total_position = 0      # 总持仓数量
+            self.is_initialized = False  # 网格是否已初始化
+            self.start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+            # self.last_trade_time = None  # 上次交易时间
             
+            # 20250311: 添加订单记录和待处理订单集合
+            self.order_records = {}      # 订单记录字典
+            self.pending_orders = set()  # 待处理订单集合
+            
+            # 20250311: 添加策略启动标志，用于持仓同步逻辑
+            self.strategy_started = False
+            
+            # 20250311: 初始化周期交易状态
+            current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
             self.current_period_trades = {
-                'period': '',            # 当前周期标识
-                'buy_count': 0,          # 买入次数
-                'sell_count': 0,         # 卖出次数
-                'grids': set()           # 已操作的网格
+                'period': current_time.strftime('%Y%m%d_%H%M'),
+                'buy_count': 0,
+                'sell_count': 0,
+                'grids': set()
             }
-
+            
+            # 调用约定函数，注意这里把ignore_isolation的初始化移到global_variables之后
             self.trigger_symbols()
             self.custom_indicator()
             self.global_variables()
-            print(f"[初始化完成]，网格交易策略{STRATEGY_VERSION}已启动，完成所有必要设置")
             
-            # 检查是否有未处理的持仓
-            actual_position = position_holding_qty(self.stock)
-            if actual_position > 0:
-                print(f"[持仓检测] 检测到当前账户已有持仓：{actual_position}股，正在尝试恢复状态")
-                if self._recover_positions():
-                    print("持仓状态恢复成功，继续执行策略")
-                else:
-                    print("持仓状态恢复失败，停止策略")
-                    return
-
-            print(f"[初始化完成] 网格交易策略{STRATEGY_VERSION}已准备就绪，开始运行")
+            # 20250311: 根据全局变量设置隔离模式
+            self.ignore_isolation = self.use_isolation
+            if self.ignore_isolation:
+                print("[初始化完成] 策略运行在隔离模式下")
+            
+            print("[初始化完成]，网格交易策略v5.3.7已启动，完成所有必要设置")
+            print("[初始化完成] 网格交易策略v5.3.7已准备就绪，开始运行")
             
         except Exception as e:
-            print(f"网格交易策略{STRATEGY_VERSION}初始化发生错误: {str(e)}")
+            print(f"初始化策略时发生错误: {str(e)}")
             import traceback
             print(traceback.format_exc())
 
@@ -102,12 +99,20 @@ class Strategy(StrategyBase):
             self.position_sync_retry = show_variable(3, GlobalType.INT, "持仓同步重试次数")
             self.is_backtest = show_variable(False, GlobalType.BOOL, "是否回测环境")
         
-            # 20250117：增加开关，"网格重置后是否立即尝试买入" ，默认“是”
+            # 20250117：增加开关，"网格重置后是否立即尝试买入" ，默认"是"
             self.buy_after_reset = show_variable(True, GlobalType.BOOL, "网格重置后立即尝试开仓")
-            # 20250117：增加开关，“减少日志冗余”，默认“是”
+            # 20250117：增加开关，"减少日志冗余"，默认"是"
             self.verbose_log = show_variable(True, GlobalType.BOOL, "是否输出详细调试日志")
-            # 20250208：增加开关，“金字塔加仓”，默认“否”
+            # 20250208：增加开关，"金字塔加仓"，默认"否"
             self.use_pyramid = show_variable(False, GlobalType.BOOL, "是否启用金字塔加仓")
+
+            # 20250310：增加价格区间限制功能
+            self.use_price_range = show_variable(True, GlobalType.BOOL, "启用价格区间限制")
+            self.min_price_range = show_variable(0.0, GlobalType.FLOAT, "价格区间下限")
+            self.max_price_range = show_variable(999999.0, GlobalType.FLOAT, "价格区间上限")
+            
+            # 20250311：增加隔离模式开关，默认开启
+            self.use_isolation = show_variable(True, GlobalType.BOOL, "启用隔离模式")
 
             print("全局变量设置完成")
             
@@ -116,6 +121,7 @@ class Strategy(StrategyBase):
 
     def check_strategy_status(self):
         """
+        20250305 添加价格区间检查
         检查策略运行状态20250208
         1. 对比 actual_position 与 self.total_position，如不一致，则先做一次"从成交查询"校准
         2. 如果仍不一致，就告警并返回False
@@ -124,7 +130,12 @@ class Strategy(StrategyBase):
             current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
             running_hours = (current_time - self.start_time).total_seconds() / 3600
             
-            actual_position = position_holding_qty(self.stock)
+            # 使用新的API获取实际持仓
+            position_symbols = get_position_symbol()
+            actual_position = 0
+            if position_symbols and self.stock in position_symbols:
+                actual_position = available_qty(self.stock)
+                
             if abs(actual_position - self.total_position) > 0.001:
                 # 再尝试一次从成交记录拉取并更新持仓
                 print(f"检测到持仓不一致，尝试再次从成交记录核对...")
@@ -140,6 +151,12 @@ class Strategy(StrategyBase):
                 self.send_alert(f"警告:无法获取行情数据,请检查网络连接")
                 return False
                 
+            # 检查价格是否在允许区间内20250305
+            latest_price = current_price(self.stock)
+            if not self._is_price_in_range(latest_price):
+                # 这里我们只打印警告，不返回False，因为在handle_data中会再次检查
+                print(f"警告: 当前价格 {latest_price:.2f} 超出设定区间 [{self.min_price_range:.2f}-{self.max_price_range:.2f}]")
+                    
             return True
             
         except Exception as e:
@@ -158,7 +175,12 @@ class Strategy(StrategyBase):
         恢复已有持仓状态，在策略重启时直接执行手动隔离模式20250208。
         """
         try:
-            actual_position = position_holding_qty(self.stock)
+            # 使用新的API获取实际持仓
+            position_symbols = get_position_symbol()
+            actual_position = 0
+            if position_symbols and self.stock in position_symbols:
+                actual_position = available_qty(self.stock)
+                
             if actual_position == 0:
                 return True
 
@@ -320,6 +342,12 @@ class Strategy(StrategyBase):
             print(f"活动网格持仓: {total_active}股")
             print(f"高位网格持仓: {total_high}股")
             print(f"持仓总数: {total_active + total_high}股")
+            
+            # 使用新的API再次获取实际持仓
+            position_symbols = get_position_symbol()
+            actual_position = 0
+            if position_symbols and self.stock in position_symbols:
+                actual_position = available_qty(self.stock)
             print(f"实际持仓: {actual_position}股")
             
             if total_active + total_high != actual_position:
@@ -399,7 +427,7 @@ class Strategy(StrategyBase):
         验证并修正持仓数据，如果仍无法修正，则返回False20250208。
         主要逻辑：
         1. 如果 `ignore_isolation` 标识为 True，则直接跳过任何持仓修正，允许策略与实际持仓不一致；
-        2. 若没有忽略隔离，则对比 self.total_position 与 position_holding_qty()；
+        2. 若没有忽略隔离，则对比 self.total_position 与实际持仓；
         - 若不一致，先从成交记录恢复/同步；
         - 若依然不一致，则尝试强制同步；
         - 若还是无法修复，则返回 False。
@@ -410,10 +438,16 @@ class Strategy(StrategyBase):
             return True
             
         try:
-            actual_position = position_holding_qty(self.stock)
+            # 使用新的API获取实际持仓
+            position_symbols = get_position_symbol()
+            actual_position = 0
+            if position_symbols and self.stock in position_symbols:
+                actual_position = available_qty(self.stock)
             print(f"当前实际持仓: {actual_position}股")
 
-            if actual_position == 0:
+            # 20250311: 修改持仓同步逻辑，增加策略启动标志
+            # 如果是策略首次运行，且实际持仓为0，则清空记录
+            if actual_position == 0 and not hasattr(self, 'strategy_started'):
                 # 无实际持仓，则清空记录
                 self.positions = {}
                 self.position_records = {}
@@ -421,6 +455,15 @@ class Strategy(StrategyBase):
                 self.high_records = {}
                 self.total_position = 0
                 print("实际持仓为0，已清空所有持仓记录")
+                # 标记策略已启动
+                self.strategy_started = True
+                return True
+            
+            # 如果策略已经启动过，且有自己的持仓记录，但实际持仓为0
+            # 可能是因为其他途径卖出了股票，此时我们应该保留策略的持仓记录
+            if actual_position == 0 and hasattr(self, 'strategy_started') and self.total_position > 0:
+                print(f"警告: 实际持仓为0，但策略记录持仓为{self.total_position}股，可能是通过其他途径卖出")
+                print("保留策略持仓记录，等待下次交易")
                 return True
             
             # 如果持仓不一致，需要修正
@@ -451,6 +494,8 @@ class Strategy(StrategyBase):
                 return self._verify_positions()
 
             # 如果没有不一致，或者修正完毕，则再进行最终验证
+            # 标记策略已启动
+            self.strategy_started = True
             return self._verify_positions()
             
         except Exception as e:
@@ -460,8 +505,13 @@ class Strategy(StrategyBase):
     def _verify_positions(self):
         """验证持仓数据一致性20250208"""
         try:
+            # 使用新的API获取实际持仓
+            position_symbols = get_position_symbol()
+            actual_position = 0
+            if position_symbols and self.stock in position_symbols:
+                actual_position = available_qty(self.stock)
+            
             # 如果 ignore_isolation=True，则用虚拟值(实际持仓-隔离仓位)
-            actual_position = position_holding_qty(self.stock)
             if self.ignore_isolation:
                 # 计算手动仓位总数
                 manual_total = sum(self.manual_positions.values())
@@ -575,7 +625,7 @@ class Strategy(StrategyBase):
             self.current_period_trades['grids'].add(grid_price)
 
     def handle_data(self):
-        """主要策略逻辑20250208"""
+        """主要策略逻辑20250305"""
         try:
             current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
             
@@ -591,6 +641,10 @@ class Strategy(StrategyBase):
                     
             print(f"\n当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"当前价格: {latest_price:.1f}")
+
+            # 检查价格是否在允许区间内
+            if not self._is_price_in_range(latest_price):
+                return
             
             # 检查是否新周期
             if not self._is_new_period(current_time):
@@ -668,7 +722,7 @@ class Strategy(StrategyBase):
 
     def _place_buy_order(self, grid_price, latest_price):
         """
-        20250208统一逻辑: 
+        20250305 增加订单前再次检查价格区间，20250208统一逻辑: 
         1) 先计算要买多少, 以及网格上限多少
         2) 检查当前网格与总持仓限制
         3) 调用 _place_order(...) 提交订单
@@ -677,6 +731,11 @@ class Strategy(StrategyBase):
         """
         import time
         try:
+
+            # 再次检查价格是否在允许区间内
+            if not self._is_price_in_range(latest_price):
+                return False
+
             # 1) 计算下单数量 & 网格上限
             trade_qty, grid_limit = self._calculate_trade_quantity(grid_price)
             if trade_qty <= 0:
@@ -764,7 +823,12 @@ class Strategy(StrategyBase):
         try:
             print("\n=== 从成交记录恢复持仓状态 ===")
             
-            actual_position = position_holding_qty(self.stock)
+            # 使用新的API获取实际持仓
+            position_symbols = get_position_symbol()
+            actual_position = 0
+            if position_symbols and self.stock in position_symbols:
+                actual_position = available_qty(self.stock)
+                
             if actual_position == 0:
                 print("当前无持仓，跳过恢复")
                 return None
@@ -1034,6 +1098,7 @@ class Strategy(StrategyBase):
 
     def _initialize_grids(self, base_price):
         """
+        20250305 初始化网格需要考虑价格区间
         初始化或重置网格20250208
         """
         try:
@@ -1045,8 +1110,17 @@ class Strategy(StrategyBase):
                 print("无效的网格间距")
                 return False
 
+             # 检查价格是否在允许区间内20250305
+            if not self._is_price_in_range(base_price):
+                print("基准价格超出允许区间，跳过网格初始化")
+                return False
+
             with self._position_lock:
-                actual_position = position_holding_qty(self.stock)
+                # 使用新的API获取实际持仓
+                position_symbols = get_position_symbol()
+                actual_position = 0
+                if position_symbols and self.stock in position_symbols:
+                    actual_position = available_qty(self.stock)
                 print(f"当前实际持仓: {actual_position}股")
 
                 # 计算网格价格列表
@@ -1067,7 +1141,12 @@ class Strategy(StrategyBase):
                     if self._check_profit_before_reset(base_price):
                         print("重置网格前先平掉部分获利仓位")
 
-                actual_position = position_holding_qty(self.stock)
+                # 使用新的API再次获取实际持仓（因为可能已经卖出了一些）
+                position_symbols = get_position_symbol()
+                actual_position = 0
+                if position_symbols and self.stock in position_symbols:
+                    actual_position = available_qty(self.stock)
+                    
                 if self.ignore_isolation:
                     print("[_initialize_grids] ignore_isolation=True，使用空网格。")
                     self.grid_prices = new_grid_prices
@@ -1112,7 +1191,12 @@ class Strategy(StrategyBase):
 
                 # 如果希望重置后立即开仓
                 if self.buy_after_reset:
-                    actual_position = position_holding_qty(self.stock)
+                    # 使用新的API获取实际持仓
+                    position_symbols = get_position_symbol()
+                    actual_position = 0
+                    if position_symbols and self.stock in position_symbols:
+                        actual_position = available_qty(self.stock)
+                        
                     if actual_position < self.max_total_position:
                         current_grid = self._find_nearest_value(base_price, self.grid_prices)
                         if current_grid and self.positions.get(current_grid, 0) == 0:
@@ -1128,12 +1212,18 @@ class Strategy(StrategyBase):
             return False
 
     def _print_grid_status(self, show_all=True, show_time=False):
-        """打印网格状态20250208"""
+        """20250305添加价格区间，打印网格状态20250208"""
         try:
             print("\n[网格状态更新]")
 
             # 获取最新价格
             latest_price = current_price(self.stock)
+
+            # 显示价格区间信息
+            if self.use_price_range:
+                in_range = self._is_price_in_range(latest_price)
+                range_status = "正常" if in_range else "超出区间"
+                print(f"[价格区间]: {self.min_price_range:.2f} - {self.max_price_range:.2f}, 当前: {latest_price:.2f} ({range_status})")
 
             # 打印活动网格状态
             print("[活动网格状态]:")
@@ -1408,7 +1498,7 @@ class Strategy(StrategyBase):
 
     def _execute_sell_order(self, profitable_grids, current_price, from_high=False):
         """
-        20250208通用卖出逻辑，统一处理：
+        20250305 卖出订单执行前检查价格区间，20250208通用卖出逻辑，统一处理：
         1. 计算总卖出数量 total_quantity
         2. 判断周期交易限制
         3. 下单 -> 等待成交 (区分回测/实盘)
@@ -1422,6 +1512,12 @@ class Strategy(StrategyBase):
         import time
 
         try:
+            # 检查价格是否在允许区间内20250305
+            # 注意：卖出时我们可以选择即使价格超出区间也允许卖出，以控制风险
+            # 目前执行严格遵循区间限制，如果希望价格超出也可卖，请注释下面的代码
+            if not self._is_price_in_range(current_price):
+                return False
+            
             # 1. 计算总卖出数量
             total_quantity = sum(item[1] for item in profitable_grids)
             if total_quantity <= 0:
@@ -1565,6 +1661,10 @@ class Strategy(StrategyBase):
             total_qty_collected = 0.0
             end_time_val = time.time() + timeout
             attempt = 0
+            
+            # 20250311: 增加初始等待时间，避免订单刚提交就开始查询
+            # 等待5秒，让订单有足够时间成交
+            time.sleep(5)
 
             while time.time() < end_time_val:
                 attempt += 1
@@ -1628,7 +1728,7 @@ class Strategy(StrategyBase):
         # 保留小数的小工具函数
         def round_price(p, digits=keep_digit):
             factor = 10 ** digits
-            # 这里采用“四舍五入”的逻辑，可根据需要也可以改成 math.floor / ceil
+            # 这里采用"四舍五入"的逻辑，可根据需要也可以改成 math.floor / ceil
             return float(int(p * factor + 0.5) / factor)
 
         base_grid = round_price(base_price, keep_digit)
@@ -1653,7 +1753,8 @@ class Strategy(StrategyBase):
                                    skip_period_check=False,
                                    reason=None):
         """
-        通用的“检查网格中是否达到盈利阈值并执行卖出”的方法。
+        20250305 检查盈利时也考虑价格区间
+        通用的"检查网格中是否达到盈利阈值并执行卖出"的方法。
         
         :param current_price: float, 当前价格
         :param skip_period_check: bool, 是否跳过当前周期检查 (True 表示不限制周期卖出)
@@ -1663,6 +1764,12 @@ class Strategy(StrategyBase):
         try:
             if current_price <= 0:
                 print(f"[_check_profit_and_execute_sell] 无效的 current_price={current_price}")
+                return False
+
+            # 检查价格是否在允许区间内
+            # 注意：卖出时我们可以选择即使价格超出区间也允许卖出，以控制风险
+            # 执行严格遵循区间限制，如果希望超出区间可以卖出，请注释下面的代码
+            if not self._is_price_in_range(current_price):
                 return False
 
             # 如果不跳过周期检查，则看一下能不能在当前周期卖出
@@ -1701,3 +1808,26 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"[_check_profit_and_execute_sell] 出现异常: {str(e)}")
             return False
+
+    def _is_price_in_range(self, price):
+        """
+        20250305检查价格是否在设定的区间内
+        
+        Args:
+            price (float): 需要检查的价格
+            
+        Returns:
+            bool: 如果价格在区间内或未启用区间限制，返回True；否则返回False
+        """
+        if not self.use_price_range:
+            return True
+            
+        if price < self.min_price_range:
+            print(f"当前价格 {price:.2f} 低于设定区间下限 {self.min_price_range:.2f}，暂停交易")
+            return False
+            
+        if price > self.max_price_range:
+            print(f"当前价格 {price:.2f} 高于设定区间上限 {self.max_price_range:.2f}，暂停交易")
+            return False
+            
+        return True
