@@ -162,3 +162,5 @@ cython_debug/
 #.idea/
 # personal docs
 docs/
+strategies/*/data/*.csv
+strategies/*/data/**/*.csv
