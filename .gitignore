@@ -47,9 +47,9 @@ coverage.xml
 Thumbs.db
 
 # Project-specific: ignore only raw data/outputs, not docs or code
-strategies/*/*.csv
+# strategies/*/*.csv
 strategies/*/*.txt
-strategies/*/data/*.csv
+# strategies/*/data/*.csv
 historical_orders/*.csv
 historical_orders/*.txt
 
@@ -169,7 +169,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 # personal docs
-strategies/*/*.csv
+# strategies/*/*.csv
 strategies/*/*.txt
-strategies/*/data/*.csv
-strategies/*/data/**/*.csv
+# strategies/*/data/*.csv
+# strategies/*/data/**/*.csv
