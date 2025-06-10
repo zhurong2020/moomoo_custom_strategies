@@ -30,7 +30,7 @@ class Strategy(StrategyBase):
         if not hasattr(self, 'max_total_position'):
             self.global_variables()
         
-        STRATEGY_VERSION = "v5.3.10"
+        STRATEGY_VERSION = "v5.3.11"
         try:
             self._position_lock = threading.RLock()
             self.start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
@@ -440,7 +440,7 @@ class Strategy(StrategyBase):
         )
 
     def _migrate_positions_to_new_grids(self, actual_position, old_positions, old_records, new_grid_prices):
-        """将持仓迁移到新网格,保留高位网格信息。"""
+        """将持仓迁移到新网格,合并普通/高位同价位持仓，避免重复。"""
         try:
             new_positions = {}
             new_records = {}
@@ -448,72 +448,42 @@ class Strategy(StrategyBase):
             new_high_records = {}
                 
             # 获取新网格的最高价格
-            highest_new_grid = new_grid_prices[0]
-            for price in new_grid_prices[1:]:
-                if price > highest_new_grid:
-                    highest_new_grid = price
+            highest_new_grid = max(new_grid_prices[0], new_grid_prices[-1])
             print(f"\n开始迁移持仓（新网格最高价格: {highest_new_grid:.1f}）")
             
-            # 1. 先处理原有的高位网格持仓
-            if self.high_positions:
-                print("\n处理原有高位网格持仓:")
-                for price, qty in sorted(self.high_positions.items()):
-                    if qty <= 0:
-                        continue
-                        
-                    record = self.high_records[price]
-                    # 判断是否可以进入新网格
-                    if price <= highest_new_grid:
-                        nearest_grid = self._find_nearest_value(price, price_list=new_grid_prices)
-                        if nearest_grid:
-                            print(f"高位网格 {price:.1f} 的 {qty}股可以迁移到新网格 {nearest_grid:.1f}")
-                            current_qty = new_positions.get(nearest_grid, 0)
-                            if current_qty + qty <= self.max_grid_position:
-                                new_positions[nearest_grid] = current_qty + qty
-                                new_records[nearest_grid] = record.copy()
-                                new_records[nearest_grid]['quantity'] = current_qty + qty
-                            else:
-                                # 超出新网格容量，保持为高位网格
-                                print(f"因超出网格容量限制，保持为高位网格")
-                                new_high_positions[price] = qty
-                                new_high_records[price] = record.copy()
-                    else:
-                        print(f"保持高位网格 {price:.1f} 的 {qty}股")
-                        new_high_positions[price] = qty
-                        new_high_records[price] = record.copy()
-            
-            # 2. 处理现有持仓
-            print("\n处理当前活动网格持仓:")
-            for old_price, qty in sorted(old_positions.items()):
+            # 1. 合并原有高位和普通持仓，避免重复
+            merged_old = old_positions.copy()
+            for price, qty in self.high_positions.items():
+                merged_old[price] = merged_old.get(price, 0) + qty
+            merged_records = old_records.copy()
+            for price, record in self.high_records.items():
+                if price in merged_records:
+                    # 合并数量
+                    merged_records[price]['quantity'] = merged_records[price].get('quantity', 0) + record.get('quantity', 0)
+                else:
+                    merged_records[price] = record.copy()
+            # 2. 遍历所有合并后的持仓，迁移到新网格
+            for old_price, qty in sorted(merged_old.items()):
                 if qty <= 0:
                     continue
-                    
-                record = old_records[old_price]
-                
+                record = merged_records[old_price]
                 # 判断是否应该成为高位网格
                 if old_price > highest_new_grid:
                     print(f"网格 {old_price:.1f} 的 {qty}股 高于新网格范围，转为高位网格")
                     new_high_positions[old_price] = qty
                     new_high_records[old_price] = record.copy()
                     continue
-                    
                 # 在新网格范围内的持仓正常迁移
                 nearest_grid = self._find_nearest_value(old_price, price_list=new_grid_prices)
                 if nearest_grid:
                     print(f"迁移 {old_price:.1f} 的 {qty}股 到网格 {nearest_grid:.1f}")
                     current_qty = new_positions.get(nearest_grid, 0)
-                    if current_qty + qty <= self.max_grid_position:
-                        new_positions[nearest_grid] = current_qty + qty
-                        new_records[nearest_grid] = record.copy()
-                        new_records[nearest_grid]['quantity'] = current_qty + qty
-                    else:
-                        print(f"超出网格 {nearest_grid:.1f} 容量限制，转为高位网格")
-                        new_high_positions[old_price] = qty
-                        new_high_records[old_price] = record.copy()
+                    new_positions[nearest_grid] = current_qty + qty
+                    new_records[nearest_grid] = record.copy()
+                    new_records[nearest_grid]['quantity'] = current_qty + qty
                 else:
                     print(f"无法为价格 {old_price:.1f} 找到合适的网格")
                     return False
-            
             # 验证迁移结果
             total_active = sum(new_positions.values())
             total_high = sum(new_high_positions.values())
@@ -521,18 +491,15 @@ class Strategy(StrategyBase):
             print(f"活动网格持仓: {total_active}股")
             print(f"高位网格持仓: {total_high}股")
             print(f"持仓总数: {total_active + total_high}股")
-            
             # 使用新的API再次获取实际持仓
             position_symbols = get_position_symbol()
             actual_position = 0
             if position_symbols and self.stock in position_symbols:
                 actual_position = position_holding_qty(self.stock)
             print(f"实际持仓: {actual_position}股")
-            
             if total_active + total_high != actual_position:
                 print(f"警告: 持仓不一致 - 活动网格:{total_active} + 高位网格:{total_high} != 实际持仓:{actual_position}")
                 return False
-                    
             # 更新网格信息
             self.grid_prices = new_grid_prices
             self.positions = new_positions
@@ -540,10 +507,8 @@ class Strategy(StrategyBase):
             self.high_positions = new_high_positions
             self.high_records = new_high_records
             self.total_position = total_active + total_high
-            
             print("\n迁移后网格状态:")
             self._print_grid_status(show_all=True)
-            
             return self._verify_positions()
                 
         except Exception as e:
@@ -746,6 +711,7 @@ class Strategy(StrategyBase):
                         if abs(record['quantity'] - qty) > 0.001:
                             print(f"[错误] 高位网格{price}数量不匹配: {record['quantity']} != {qty}")
                             return False
+                
                 self.total_position = total_positions
                 if self.verbose_log:
                     print("[回测/模拟] 本地持仓验证通过")
@@ -863,29 +829,44 @@ class Strategy(StrategyBase):
         return False
 
     def _should_reset_grid(self, latest_price):
-        """判断是否需要重置网格。"""
+        """判断是否需要重置网格。若重置则主动清理下方所有持仓。"""
         try:
             if not self.grid_prices:
                 return True
                     
-            closest_grid = self._find_nearest_value(latest_price)
-            if closest_grid:
-                deviation = abs(latest_price - closest_grid) / closest_grid
-                if deviation > self.grid_percentage:
-                    # 检查活动网格中是否存在高于当前价格的持仓
-                    high_position = sum(qty for grid, qty in self.positions.items() 
-                                    if grid > latest_price)
-                    if high_position > 0:
-                        print(f"价格偏离网格过大: {deviation:.2%}, 但当前网格存在高位持仓{high_position}, 执行网格保存")
-                        return True
-                    else:
-                        print(f"价格偏离网格过大: {deviation:.2%}, 且无高位持仓, 执行网格重置")
-                        return True
+            # 价格偏离区间过大，触发重置
+            if latest_price < self.grid_prices[0] * 0.97 or latest_price > self.grid_prices[-1] * 1.03:
+                print(f"价格偏离网格过大: {abs(latest_price - self.base_grid)/self.base_grid*100:.2f}%, 执行网格重置前主动清理下方持仓")
+                # 重置前主动清理所有低于当前价格的持仓
+                self._clear_all_profitable(latest_price)
+                return True
             return False
                 
         except Exception as e:
             print(f"检查网格重置时发生错误: {str(e)}")
             return False
+
+    def _clear_all_profitable(self, current_price):
+        """清理所有低于当前价格且已盈利的持仓（普通+高位）。"""
+        cleared = False
+        all_positions = {}
+        for g, q in self.positions.items():
+            all_positions[g] = all_positions.get(g, 0) + q
+        for g, q in self.high_positions.items():
+            all_positions[g] = all_positions.get(g, 0) + q
+        for grid_price, qty in list(all_positions.items()):
+            if qty <= 0:
+                continue
+            buy_price = self.position_records.get(grid_price, {}).get('buy_price', 0)
+            if buy_price <= 0:
+                continue
+            price_diff = (current_price - buy_price) / buy_price
+            if price_diff >= self.grid_percentage:
+                print(f"[主动清理] 网格{grid_price} 盈利{price_diff*100:.2f}%，全部卖出{qty}股")
+                self._execute_sell_order([(grid_price, qty, buy_price)], current_price, False)
+                cleared = True
+        if not cleared:
+            print("[主动清理] 无可盈利持仓，无需清理")
 
     def _find_nearest_value(self, target_price, price_list=None):
         """在给定的价格列表中查找最接近目标价格的值。"""
@@ -1021,10 +1002,10 @@ class Strategy(StrategyBase):
                     print(f"[周期限制] 当前网格 {current_grid:.1f} 本周期不可买入")
                 return
 
-            # 检查当前网格是否达到持仓上限，允许累计买入
+            # 金字塔加仓/传统模式统一入口，动态计算买入数量和单网格上限
             current_pos = self.positions.get(current_grid, 0)
-            grid_limit = getattr(self, 'max_grid_position', 2)  # 严格用用户设置
-            trade_qty = getattr(self, 'trade_quantity', 2)
+            # 动态计算买入数量、单网格上限、当前金字塔层数和倍数
+            trade_qty, grid_limit, down_level, multiplier = self._calculate_trade_quantity(current_grid, return_layer=True)
             if current_pos >= grid_limit:
                 print(f"网格 {current_grid:.1f} 已达持仓上限 {grid_limit}股，跳过买入")
                 return
@@ -1033,12 +1014,22 @@ class Strategy(StrategyBase):
             if buy_qty <= 0:
                 print(f"网格 {current_grid:.1f} 剩余可买入数量为0，跳过买入")
                 return
+            # 日志：首单买入提示
+            if self.total_position == 0:
+                print(f"[首单] 网格={current_grid:.1f}, 按基础数量买入 {buy_qty} 股")
+            # 日志：金字塔/普通模式买入明细
+            if self.use_pyramid:
+                print(f"[金字塔买入] 网格={current_grid:.1f}, 层数={down_level}, 倍数={multiplier}, 买入={buy_qty}, 层上限={grid_limit}")
+            else:
+                print(f"[普通模式买入] 网格={current_grid:.1f}, 买入={buy_qty}, 单网格上限={grid_limit}")
             # 执行买入
             if self._place_buy_order(current_grid, latest_price, buy_qty):
                 self._update_period_trade_status(current_grid, is_buy=True)
                 self.last_trade_time = current_time
                 if self.verbose_log:
                     print(f"[买入成功] 网格={current_grid:.1f}, 数量={buy_qty}, 价格={latest_price:.2f}")
+                # 买入后统一展示持仓分布
+                self._print_grid_status(show_all=True, show_time=True)
 
         except Exception as e:
             print(f"策略运行时发生错误: {str(e)}")
@@ -1199,71 +1190,56 @@ class Strategy(StrategyBase):
             print(traceback.format_exc())
             return False
 
-    def _calculate_trade_quantity(self, grid_price):
+    def _calculate_trade_quantity(self, grid_price, return_layer=False):
         """
-        20250208根据 use_pyramid 参数，决定买入数量：
-        - 若 use_pyramid=False:  固定 trade_quantity 并严格遵守 max_grid_position
-        - 若 use_pyramid=True :  金字塔加仓(自定义倍数) 并可动态放大单网格上限
-
-        返回: (trade_qty, grid_limit)
-            trade_qty   -> 本次应下单数量
-            grid_limit  -> 本次允许的单网格上限(可能=max_grid_position或放大)
+        根据 use_pyramid 参数，决定买入数量/单网格上限，并返回当前金字塔层数和倍数（用于日志）。
+        - 若 use_pyramid=False: 固定 trade_quantity 与 max_grid_position
+        - 若 use_pyramid=True : 金字塔加仓，层数越深倍数越高
+        返回: (trade_qty, grid_limit, down_level, multiplier)（return_layer=True时）
         """
         base_qty = self.trade_quantity
-
         if not self.use_pyramid:
-            # 传统模式: 直接用 trade_quantity
             trade_qty = base_qty
-            grid_limit = self.max_grid_position  # 固定单网格上限
-            if self.verbose_log:
-                print(f"[传统模式] 单次买入={trade_qty}, 网格上限={grid_limit}")
+            grid_limit = self.max_grid_position
+            if return_layer:
+                return trade_qty, grid_limit, 0, 1
             return trade_qty, grid_limit
-
         else:
             try:
-                # 金字塔模式: 举例使用简易序列
+                # 金字塔序列可自定义
                 pyramid_sequence = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
-
-                # 若尚未设定 base_grid, 就以中间网格或当前grid_price当做基准
                 if not hasattr(self, 'base_grid') or not self.base_grid:
                     if self.grid_prices:
                         mid_idx = len(self.grid_prices) // 2
                         self.base_grid = self.grid_prices[mid_idx]
                     else:
                         self.base_grid = grid_price
-
                 try:
                     base_index = self.grid_prices.index(self.base_grid)
                 except ValueError:
                     base_index = 0
-
                 try:
                     this_index = self.grid_prices.index(grid_price)
                 except ValueError:
                     this_index = base_index
-
                 down_level = base_index - this_index
                 if down_level < 0:
                     down_level = 0
                 if down_level >= len(pyramid_sequence):
                     down_level = len(pyramid_sequence) - 1
-
                 multiplier = pyramid_sequence[down_level]
                 trade_qty = base_qty * multiplier
-
-                # 若想在金字塔模式下对单网格上限也做相应放宽:
                 grid_limit = self.max_grid_position * multiplier
-
-                if self.verbose_log:
-                    print(f"[金字塔模式] 网格={grid_price:.2f}, 下沉层数={down_level}, 倍数={multiplier}, "
-                          f"买入数量={trade_qty}, 动态上限={grid_limit}")
+                if return_layer:
+                    return trade_qty, grid_limit, down_level, multiplier
                 return trade_qty, grid_limit
-
             except Exception as e:
                 print(f"[系统错误] 执行买入订单时发生错误: {str(e)}")
                 import traceback
                 print(traceback.format_exc())
-                return False
+                if return_layer:
+                    return base_qty, self.max_grid_position, 0, 1
+                return base_qty, self.max_grid_position
 
     def _get_positions_from_trades(self):
         """
@@ -1559,7 +1535,7 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"清理高位网格时发生错误: {str(e)}")
 
-    def _initialize_grids(self, base_price=None):
+    def _initialize_grids(self, base_price):
         """
         初始化或重置网格。
         """
@@ -1746,7 +1722,7 @@ class Strategy(StrategyBase):
             print(traceback.format_exc())
             return False
 
-    def _print_grid_status(self, show_all=True, show_time=False):
+    def _print_grid_status(self, show_all=False, show_time=False):
         """
         打印网格状态。
         """
@@ -2288,13 +2264,12 @@ class Strategy(StrategyBase):
                 
                 # 记录状态
                 if self.verbose_log:
-                    print(f"[实盘] 订单{order_id}当前状态={status}，等待中...")
+                    print(f"[实盘] 订单{order_id}当前状态={status}，已用时间={device_time(TimeZone.DEVICE_TIME_ZONE) - start_time}")
                 
-                # 等待下一次检查
                 time.sleep(interval)
             
             # 超时处理
-            print(f"[实盘] 订单{order_id}在{timeout}秒内未完成，当前状态={order_status(order_id)}")
+            print(f"[实盘] 订单{order_id}在{timeout}秒内未完全成交")
             
             # 检查是否有部分成交
             try:
@@ -2310,6 +2285,8 @@ class Strategy(StrategyBase):
             while device_time(TimeZone.DEVICE_TIME_ZONE) < end_time:
                 # 获取当前订单状态
                 status = order_status(order_id)
+                
+                # 1. 全部成交
                 if status == OrderStatus.FILLED_ALL:
                     # 获取成交均价
                     avg_price = execution_price(order_id)
@@ -2352,7 +2329,8 @@ class Strategy(StrategyBase):
                 time.sleep(interval)
             
             print(f"[超时] 订单{order_id}在{timeout}秒内未完全成交")
-            return False, 0
+            return False, 0, 0
+
         except Exception as e:
             print(f"[确认订单] 发生错误: {str(e)}")
             import traceback
@@ -2409,12 +2387,13 @@ class Strategy(StrategyBase):
         prices = [float(p) for p in prices]
         return prices
 
-    def _check_profit_and_execute_sell(self,
+    def _check_profit_and_execute_sell(
+                                   self,
                                    current_price,
                                    skip_period_check=False,
                                    reason='常规周期检查'):
         """
-        检查网格中是否达到盈利阈值并执行卖出。
+        检查所有类型（普通+高位）网格中是否达到盈利阈值并执行卖出。
         """
         try:
             if current_price <= 0:
@@ -2438,14 +2417,17 @@ class Strategy(StrategyBase):
             # ========== 筛选盈利网格 ==========
             profitable_grids = []
             total_sell_quantity = 0
-
-            # 可以仿照你原先 _check_and_execute_sell 里的排序逻辑
+            # 统一遍历普通和高位持仓
+            all_positions = {}
+            for g, q in self.positions.items():
+                all_positions[g] = all_positions.get(g, 0) + q
+            for g, q in self.high_positions.items():
+                all_positions[g] = all_positions.get(g, 0) + q
             position_items = sorted(
                 [(g, q, self.position_records.get(g, {}).get('buy_price', 0))
-                for g, q in self.positions.items() if q > 0],
+                for g, q in all_positions.items() if q > 0],
                 key=lambda x: x[2]  # 按买入价格排序，低成本网格先卖出
             )
-
             for grid_price, qty, buy_price in position_items:
                 if qty <= 0 or buy_price <= 0:
                     continue
@@ -2453,11 +2435,9 @@ class Strategy(StrategyBase):
                 if price_diff >= self.grid_percentage:
                     profitable_grids.append((grid_price, qty, buy_price))
                     total_sell_quantity += qty
-
             if not profitable_grids:
                 print(f"未发现满足盈利阈值的网格 （卖出触发原因：{reason}）")
                 return False
-
             # ========== 执行批量卖出 ==========
             print(f"[卖出触发原因：{reason}] 检测到 {len(profitable_grids)} 个盈利网格，总数量={total_sell_quantity}，准备卖出")
             success = self._execute_batch_sell(profitable_grids, current_price)
