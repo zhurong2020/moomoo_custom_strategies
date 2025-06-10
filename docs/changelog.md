@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [strategy_v3 v5.3.8] - 2025-03-11
+## [strategy_v3 v5.3.10] - 2025-03-11
 ### Added
 - Enhanced grid trading strategy with improved position management
 - Added price range validation for trading operations
