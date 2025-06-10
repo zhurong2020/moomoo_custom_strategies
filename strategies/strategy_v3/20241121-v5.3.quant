@@ -989,20 +989,26 @@ class Strategy(StrategyBase):
     def _place_buy_order(self, grid_price, latest_price):
         """
         买入订单逻辑。
+        
+        Args:
+            grid_price: 网格价格
+            latest_price: 最新价格
+            
+        Returns:
+            bool: 买入是否成功
         """
         import time
         try:
-            # 再次检查价格是否在允许区间内
+            # 1) 再次检查价格是否在允许区间内
             if not self._is_price_in_range(latest_price):
                 return False
 
-            # 1) 检查资金是否充足
+            # 2) 检查资金是否充足
             try:
                 available_cash = total_cash(currency=Currency.USD)
                 if self.verbose_log:
                     print(f"[资金] 当前可用资金: {available_cash:.2f}")
                 
-                # 检查最小订单金额
                 min_order_amount = latest_price * self.min_order_quantity
                 if available_cash < min_order_amount:
                     print(f"[资金不足] 可用资金={available_cash:.2f}, 最小订单金额={min_order_amount:.2f}")
@@ -1011,7 +1017,7 @@ class Strategy(StrategyBase):
                 print(f"[资金检查失败] {str(e)}")
                 return False
 
-            # 2) 计算下单数量 & 网格上限
+            # 3) 计算下单数量 & 检查网格/总持仓上限
             trade_qty, grid_limit = self._calculate_trade_quantity(grid_price)
             if trade_qty <= 0:
                 if self.verbose_log:
@@ -1019,7 +1025,8 @@ class Strategy(StrategyBase):
                 return False
 
             current_pos = self.positions.get(grid_price, 0)
-            # 3) 检查单网格上限
+            
+            # 4) 检查单网格持仓上限
             if current_pos + trade_qty > grid_limit:
                 allowed = grid_limit - current_pos
                 if allowed <= 0:
@@ -1029,7 +1036,7 @@ class Strategy(StrategyBase):
                     print(f"[网格限制] 原本需买{trade_qty}股，但超出网格上限，截断为{allowed}股")
                     trade_qty = allowed
 
-            # 检查总持仓上限
+            # 5) 检查总持仓上限
             if self.total_position + trade_qty > self.max_total_position:
                 can_buy = self.max_total_position - self.total_position
                 if can_buy <= 0:
@@ -1042,28 +1049,28 @@ class Strategy(StrategyBase):
             if trade_qty <= 0:
                 return False
 
-            # 4) 获取实时买价进行二次验证
+            # 6) 获取实时买价进行二次验证
             ask_price = ask(self.stock, level=1)
             if not ask_price:
                 ask_price = latest_price
 
-            # 检查价格偏差
+            # 7) 检查价格偏差
             price_diff = abs(ask_price - grid_price) / grid_price
             max_deviation = self.grid_percentage * 0.8
             if price_diff > max_deviation:
                 print(f"[价格偏差] 实时买价{ask_price:.2f}超出网格{grid_price:.2f}允许范围")
                 return False
 
-            print(f"[订单提交] 尝试买入 {self.stock}：网格={grid_price:.2f}, 数量={trade_qty}股, "
-                  f"预期价格={ask_price:.2f}")
+            print(f"[订单提交] 尝试买入 {self.stock}：网格={grid_price:.2f}, 数量={trade_qty}股, 预期价格={ask_price:.2f}")
 
-            # 5) 下单
+            # 8) 下单
             start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
             order_id = self._place_order(trade_qty, side=OrderSide.BUY, is_market=True)
             if not order_id:
                 print("[订单失败] 买入订单创建失败")
                 return False
 
+            # 9) 记录订单信息
             self.order_records[order_id] = {
                 'side': OrderSide.BUY,
                 'grid_price': grid_price,
@@ -1071,7 +1078,7 @@ class Strategy(StrategyBase):
             }
             self.pending_orders.add(order_id)
 
-            # 6) 等待成交
+            # 10) 等待成交
             try:
                 success, avg_price, filled_qty = self._confirm_order(
                     order_id=order_id,
@@ -1098,10 +1105,76 @@ class Strategy(StrategyBase):
                 self.pending_orders.discard(order_id)
 
         except Exception as e:
-            print(f"[系统错误] 执行买入订单时发生错误: {str(e)}")
+            print(f"[系统错误] 买入订单流程异常: {str(e)}")
             import traceback
             print(traceback.format_exc())
             return False
+
+    def _calculate_trade_quantity(self, grid_price):
+        """
+        20250208根据 use_pyramid 参数，决定买入数量：
+        - 若 use_pyramid=False:  固定 min_order_quantity 并严格遵守 position_limit
+        - 若 use_pyramid=True :  金字塔加仓(自定义倍数) 并可动态放大单网格上限
+
+        返回: (trade_qty, grid_limit)
+            trade_qty   -> 本次应下单数量
+            grid_limit  -> 本次允许的单网格上限(可能=position_limit或放大)
+        """
+        base_qty = self.min_order_quantity
+
+        if not self.use_pyramid:
+            # 传统模式: 直接用 min_order_quantity
+            trade_qty = base_qty
+            grid_limit = self.position_limit  # 固定单网格上限
+            if self.verbose_log:
+                print(f"[传统模式] 单次买入={trade_qty}, 网格上限={grid_limit}")
+            return trade_qty, grid_limit
+
+        else:
+            try:
+                # 金字塔模式: 举例使用简易序列
+                pyramid_sequence = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+
+                # 若尚未设定 base_grid, 就以中间网格或当前grid_price当做基准
+                if not hasattr(self, 'base_grid') or not self.base_grid:
+                    if self.grid_prices:
+                        mid_idx = len(self.grid_prices) // 2
+                        self.base_grid = self.grid_prices[mid_idx]
+                    else:
+                        self.base_grid = grid_price
+
+                try:
+                    base_index = self.grid_prices.index(self.base_grid)
+                except ValueError:
+                    base_index = 0
+
+                try:
+                    this_index = self.grid_prices.index(grid_price)
+                except ValueError:
+                    this_index = base_index
+
+                down_level = base_index - this_index
+                if down_level < 0:
+                    down_level = 0
+                if down_level >= len(pyramid_sequence):
+                    down_level = len(pyramid_sequence) - 1
+
+                multiplier = pyramid_sequence[down_level]
+                trade_qty = base_qty * multiplier
+
+                # 若想在金字塔模式下对单网格上限也做相应放宽:
+                grid_limit = self.position_limit * multiplier
+
+                if self.verbose_log:
+                    print(f"[金字塔模式] 网格={grid_price:.2f}, 下沉层数={down_level}, 倍数={multiplier}, "
+                          f"买入数量={trade_qty}, 动态上限={grid_limit}")
+                return trade_qty, grid_limit
+
+            except Exception as e:
+                print(f"[系统错误] 执行买入订单时发生错误: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+                return False
 
     def _get_positions_from_trades(self):
         """
