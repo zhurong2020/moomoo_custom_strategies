@@ -1,4 +1,4 @@
-# 网格交易策略分析 V5.3.10
+# 网格交易策略分析 V5.3.11
 
 ## 风险声明
 
@@ -74,18 +74,20 @@
 - `max_capital_usage`: 最大资金使用率，默认 90%  
 - `max_order_timeout`: 订单超时时间(秒)，默认 300 秒  
 
-### 2.2 新增配置参数（V5）
+### 2.2 新增配置参数（V5及V5.3.11）
 
 - `use_trade_records`: 是否使用成交记录恢复持仓，默认 True  
+- `allow_intraday_trading`: 允许日内多次买卖/网格重置后立即买入，默认 True（V5.3.11合并参数）  
+
 - `trade_record_days`: 成交记录查询天数(1-31)，默认 31 天  
 - `position_sync_retry`: 持仓同步重试次数，默认 3 次
-- `is_backtest`: 是否为回测模式，默认 False
-- `buy_after_reset`: 是否在网格重置后立即建仓，默认 False
-- `use_pyramid`: 是否使用金字塔加仓策略，默认 False
-- `use_isolation`: 是否启用隔离模式，默认 True（V5.3.8新增）
-- `use_price_range`: 是否启用价格区间限制，默认 True（V5.3.7新增）
-- `min_price_range`: 价格区间下限，默认 0.0
-- `max_price_range`: 价格区间上限，默认 999999.0
+- `is_backtest`: 是否为回测模式，默认 False  
+- `allow_intraday_trading`: 允许日内多次买卖/网格重置后立即买入，默认 True（V5.3.11合并参数）  
+- `use_pyramid`: 是否使用金字塔加仓策略，默认 False  
+- `use_isolation`: 是否启用隔离模式，默认 True（V5.3.8新增）  
+- `use_price_range`: 是否启用价格区间限制，默认 True（V5.3.7新增）  
+- `min_price_range`: 价格区间下限，默认 0.0  
+- `max_price_range`: 价格区间上限，默认 999999.0  
 
 ### 2.3 参数约束关系
 
@@ -112,6 +114,11 @@
 - 支持高位网格管理，处理超出常规网格范围的持仓
 
 ### 3.2 建仓逻辑
+
+- **日内交易模式/重置后立即买入**：
+  - 由参数 `allow_intraday_trading` 统一控制。
+  - 开启时：每个周期内可多次买卖，网格重置后可立即买入。
+  - 关闭时：每个周期仅允许一次买卖，卖出后需等下一个周期才能再次买入，网格重置后不立即买入。
 1. 建仓条件：
    - 总持仓未达到max_total_position
    - 目标网格持仓未达到position_limit

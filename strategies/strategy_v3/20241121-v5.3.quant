@@ -13,9 +13,9 @@ class Strategy(StrategyBase):
         print(f"网格数量: {self.grid_count}")
         print(f"价格区间: [{self.min_price_range:.2f}-{self.max_price_range:.2f}]")
         print(f"隔离模式: {'开启' if self.ignore_isolation else '关闭'}")
-        print(f"日内模式: {'开启' if self.enable_intraday_mode else '关闭'}")
+        print(f"日内模式: {'开启' if self.allow_intraday_trading else '关闭'}")
         print(f"金字塔加仓: {'开启' if self.use_pyramid else '关闭'}")
-        print(f"网格重置后立即尝试买入: {'是' if self.buy_immediately_after_reset else '否'}")
+        print(f"网格重置后立即尝试买入: {'是' if self.allow_intraday_trading else '否'}")
         print(f"价格区间外允许卖出: {'是' if self.allow_sell_out_of_range else '否'}")
         print(f"详细日志模式: {'开启' if getattr(self, 'verbose_log', False) else '关闭'}")
 
@@ -163,25 +163,14 @@ class Strategy(StrategyBase):
             self.position_sync_retry = show_variable(3, GlobalType.INT, "持仓同步重试次数")
             self.is_backtest = show_variable(True, GlobalType.BOOL, "是否回测环境")
         
-            # 20250117：增加开关，"网格重置后是否立即尝试买入" ，默认"是"
-            self.buy_immediately_after_reset = show_variable(True, GlobalType.BOOL, "网格重置后立即尝试开仓")
-            # 20250117：增加开关，"减少日志冗余"，默认"否"
+            self.allow_intraday_trading = show_variable(True, GlobalType.BOOL, "允许日内多次买卖/重置后立即买入")
             self.verbose_log = show_variable(False, GlobalType.BOOL, "是否输出详细调试日志（仅调试时打开）")
-            # 20250208：增加开关，"金字塔加仓"，默认"否"
             self.use_pyramid = show_variable(False, GlobalType.BOOL, "是否启用金字塔加仓")
 
-            # 20250310：增加价格区间限制功能
             self.use_price_range = show_variable(True, GlobalType.BOOL, "启用价格区间限制")
             self.min_price_range = show_variable(0.0, GlobalType.FLOAT, "价格区间下限")
             self.max_price_range = show_variable(999999.0, GlobalType.FLOAT, "价格区间上限")
-            
-            # 20250311：增加隔离模式开关，默认开启
             self.ignore_isolation = show_variable(True, GlobalType.BOOL, "启用隔离模式")
-            
-            # 20250312：增加日内模式开关，默认关闭
-            self.enable_intraday_mode = show_variable(False, GlobalType.BOOL, "启用日内模式(允许同周期买卖)")
-
-            # 20250609：增加价格区间外是否允许卖出配置，默认允许
             self.allow_sell_out_of_range = show_variable(True, GlobalType.BOOL, "价格区间外允许卖出")
             print("全局变量设置完成")
             
@@ -904,7 +893,7 @@ class Strategy(StrategyBase):
 
     def _can_trade_in_period(self, grid_price, is_buy=True):
         """检查是否可以在当前周期交易。"""
-        if not self.enable_intraday_mode:
+        if not self.allow_intraday_trading:
             # 非日内模式下，每个周期只允许一次买入或卖出
             if is_buy and self.current_period_trades['buy_count'] > 0:
                 print(f"当前周期已执行过买入操作")
@@ -972,15 +961,15 @@ class Strategy(StrategyBase):
             high_grid_profit = self._check_high_grid_profit(latest_price)
             if not high_grid_profit and self._check_and_execute_sell(latest_price):
                 self.last_trade_time = current_time
-                # 卖出后是否允许本周期买入，受 enable_intraday_mode 控制
-                if not self.enable_intraday_mode:
+                # 卖出后是否允许本周期买入，受 allow_intraday_trading 控制
+                if not self.allow_intraday_trading:
                     if self.verbose_log:
                         print("[非日内模式] 已卖出，本周期不再买入，等待下周期...")
                     return
 
-            # 重置后是否立即买入，受 buy_immediately_after_reset 控制
+            # 重置后是否立即买入，受 allow_intraday_trading 控制
             if just_reset:
-                if not self.buy_immediately_after_reset:
+                if not self.allow_intraday_trading:
                     if self.verbose_log:
                         print("[重置后立即买入开关] 关闭，等待下周期...")
                     return
@@ -2135,7 +2124,7 @@ class Strategy(StrategyBase):
                 # 卖出成功后，立即检查当前价格所在网格是否可以买入
                 try:
                     # 首先检查是否启用了日内模式
-                    if not self.enable_intraday_mode:
+                    if not self.allow_intraday_trading:
                         print("[非日内模式] 已启用非日内模式，卖出后不立即买入，等待下一个周期")
                         return True
                         
