@@ -39,16 +39,40 @@ class Strategy(StrategyBase):
     def global_variables(self):
         """初始化全局变量"""
         try:
-            self.investment_qty = show_variable(1, GlobalType.FLOAT, "每次定投数量（股）")
-            self.support_fractional_shares = show_variable(False, GlobalType.BOOL, "是否支持碎股")
-            self.investment_interval = show_variable(1440, GlobalType.INT, "定投周期（分钟）")
-            self.drawdown_threshold_base = show_variable(5, GlobalType.FLOAT, "基础回撤阈值（%）")
-            self.backtest_mode = show_variable(False, GlobalType.BOOL, "是否启用回测优化模式")
+            # 简化变量名，增加单位和简要提示
+            # 定投股数（仅允许10的倍数，10~200）
+            self.qty = show_variable(10, GlobalType.FLOAT, "定投股数（股，可选10/20/30...）", choices=[10,20,30,40,50,60,70,80,90,100,120,140,160,180,200])
+            # 支持碎股，仅允许True/False
+            self.frac_shares = show_variable(False, GlobalType.BOOL, "支持碎股（True/False）", choices=[True, False])
+            # 定投周期（可选1小时/日/周）
+            self.interval_min = show_variable(1440, GlobalType.INT, "定投周期（分钟，可选1小时/日/周）", choices=[60,1440,10080])
+            self.drawdown_pct = show_variable(5, GlobalType.FLOAT, "回撤阈值（%）")
+            # 回测模式，仅允许True/False
+            self.backtest = show_variable(True, GlobalType.BOOL, "回测模式（True/False）", choices=[True, False])
+            # 互斥开仓，仅允许True/False
+            self.mutual_exclusive = show_variable(True, GlobalType.BOOL, "互斥开仓（每周期仅一次，优先加仓）", choices=[True, False])
+            # 日志等级，仅允许0或1
+            self.log_level = show_variable(0, GlobalType.INT, "日志等级（0:简洁 1:调试全量）", choices=[0,1])
+            # 极端回撤阈值
+            self.extreme_drawdown_pct = show_variable(80, GlobalType.FLOAT, "极端回撤阈值（%），超过后暂停回撤加仓，仅定投")
+            # 兼容旧变量名
+            self.investment_qty = self.qty
+            self.support_fractional_shares = self.frac_shares
+            self.investment_interval = self.interval_min
+            self.drawdown_threshold_base = self.drawdown_pct
+            self.backtest_mode = self.backtest
+            self.mutual_exclusive_order = self.mutual_exclusive
             self.highest_price = None
             self.last_investment_time = None
             self.average_cost = 0.0  # 持仓成本
             self.last_adjusted_qty = None  # 用于记录上次的加仓数量
-            print("全局变量初始化完成")
+            import collections
+            self.high_queue = collections.deque(maxlen=20)
+            self.virtual_balance = 1e6 if self.backtest_mode else None
+            # 新增：回测持仓统计变量
+            self._position = 0  # 当前持仓股数
+            self._total_cost = 0.0  # 累计买入金额
+            print(f"全局变量初始化完成: 股数={self.qty}, 碎股={self.frac_shares}, 周期={self.interval_min}分钟, 回撤%={self.drawdown_pct}, 回测={self.backtest}, 互斥={self.mutual_exclusive}, 日志等级={self.log_level}, 初始虚拟余额={self.virtual_balance}")
         except Exception as e:
             print(f"全局变量设置失败: {str(e)}")
 
@@ -59,55 +83,110 @@ class Strategy(StrategyBase):
 
             # 计算当前回撤
             drawdown = self.calculate_drawdown(latest_price)
+            # 计算累计持仓与总投入、均价、市值、浮盈
+            position = self.get_position()
+            total_cost = self.get_total_cost()
+            avg_cost = self.get_avg_cost()
+            market_value = self.get_market_value(latest_price)
+            profit = self.get_profit(latest_price)
+            if self.log_level >= 1:
+                print(f"[调试] 当前价格: {latest_price}, 历史最高价: {self.highest_price}, 当前回撤: {drawdown:.2f}%，当前层级: {self.current_drawdown_layer}, 当前阈值: {self.drawdown_threshold_base}, 持仓: {position}, 总投入: {total_cost}, 均价: {avg_cost:.2f}, 市值: {market_value:.2f}, 浮盈: {profit:.2f}")
 
             # 修改重置条件：不重置 last_adjusted_qty
-            if drawdown < 5:
+            if drawdown < self.drawdown_threshold_base:
+                if self.log_level >= 1:
+                    print(f"[调试] 回撤({drawdown:.2f}%)低于阈值({self.drawdown_threshold_base}%)，重置层级为0")
                 self.current_drawdown_layer = 0
                 # 保留 last_adjusted_qty
-
-            # 初始化用于定投的数量为基础数量
             daily_investment_qty = self.investment_qty
-
-            # 回撤加仓逻辑
-            if self.should_add_position(drawdown):
-                volatility = self.calculate_volatility()  
-                adjusted_qty = self.calculate_investment_qty(
-                    base_qty=self.investment_qty,
-                    drawdown=drawdown,
-                    volatility=volatility,
-                    latest_price=latest_price,
-                    average_cost=self.average_cost
-                )
-                if adjusted_qty > 0:
-                    self.execute_add_position(latest_price, adjusted_qty, account_balance)
-                    # 更新上次调整后的数量和定投数量
-                    self.last_adjusted_qty = adjusted_qty
-                    daily_investment_qty = adjusted_qty
-                else:
-                    # 如果未触发新的加仓但仍在回撤范围内，则使用上次调整的数量
-                    if self.last_adjusted_qty is not None:
-                        daily_investment_qty = self.last_adjusted_qty
-
-            # 定投逻辑：始终执行
-            if self.should_invest(current_time):
-                self.execute_investment(latest_price, account_balance, quantity=daily_investment_qty)
-
+            # 互斥逻辑：优先回撤加仓，且每周期只触发一次买入
+            if self.mutual_exclusive_order:
+                # 极端回撤保护：超过阈值暂停回撤加仓，仅定投
+                if drawdown >= self.extreme_drawdown_pct:
+                    if self.log_level >= 0:
+                        print(f"[风控] 当前回撤({drawdown:.2f}%)已超极端阈值({self.extreme_drawdown_pct}%)，本周期暂停回撤加仓，仅执行定投。")
+                    if self.should_invest(current_time):
+                        self.execute_investment(latest_price, account_balance, quantity=daily_investment_qty)
+                        if self.log_level >= 0:
+                            print(f"[INFO] 本周期已下单类型: 定投 | 持仓: {position}, 总投入: {total_cost}")
+                    return
+                if self.should_add_position(drawdown):
+                    volatility = self.calculate_volatility()
+                    adjusted_qty = self.calculate_investment_qty(self.investment_qty, drawdown, volatility, latest_price, self.average_cost)
+                    if adjusted_qty > 0:
+                        self.execute_add_position(latest_price, adjusted_qty, account_balance)
+                        self.last_adjusted_qty = adjusted_qty
+                        if self.log_level >= 0:
+                            print(f"[INFO] 本周期已下单类型: 回撤加仓 | 持仓: {position}, 总投入: {total_cost}")
+                        return  # 加仓后直接return，确保本周期只触发一次买入
+                elif self.should_invest(current_time):
+                    self.execute_investment(latest_price, account_balance, quantity=daily_investment_qty)
+                    if self.log_level >= 0:
+                        print(f"[INFO] 本周期已下单类型: 定投 | 持仓: {position}, 总投入: {total_cost}")
+                    return
+            else:
+                # 非互斥，原有逻辑
+                if self.should_add_position(drawdown):
+                    volatility = self.calculate_volatility()
+                    adjusted_qty = self.calculate_investment_qty(self.investment_qty, drawdown, volatility, latest_price, self.average_cost)
+                    if adjusted_qty > 0:
+                        self.execute_add_position(latest_price, adjusted_qty, account_balance)
+                        self.last_adjusted_qty = adjusted_qty
+                        daily_investment_qty = adjusted_qty
+                        if self.log_level >= 0:
+                            print(f"[INFO] 本周期已下单类型: 回撤加仓 | 持仓: {position}, 总投入: {total_cost}")
+                    else:
+                        if self.last_adjusted_qty is not None:
+                            daily_investment_qty = self.last_adjusted_qty
+                if self.should_invest(current_time):
+                    self.execute_investment(latest_price, account_balance, quantity=daily_investment_qty)
+                    if self.log_level >= 0:
+                        print(f"[INFO] 本周期已下单类型: 定投 | 持仓: {position}, 总投入: {total_cost}")
         except Exception as e:
             print(f"策略运行错误: {str(e)}")
 
     def get_market_data(self):
-        """获取市场数据
-           返回: (最新价, 历史最高价, 账户余额)
+        """
+        获取市场数据，返回: (最新价, 历史最高价, 账户余额)
+        回测模式下用历史K线真实数据，实盘用实时行情。
         """
         if self.backtest_mode:
-            # 回测模式下可模拟数据
-            return 100, 100, 1e6  # 简单模拟：最新价100，最高价100，账户余额100万
+            # 回测/模拟盘下，获取K线真实历史数据
+            # 动态调整窗口长度，避免越界
+            if not hasattr(self, 'bar_index'):
+                self.bar_index = 1
+            else:
+                self.bar_index += 1
+            latest_price = bar_close(self.stock, bar_type=BarType.D1, select=1)
+            # 增量缓存高点，提升回测效率
+            self.high_queue.append(latest_price)
+            available_days = min(self.bar_index, 20)
+            high_list = list(self.high_queue)[-available_days:]
+            if len(high_list) == 0:
+                highest_price = latest_price
+            elif len(high_list) == 1:
+                highest_price = high_list[0]
+            else:
+                highest_price = max(high_list[0], high_list[1], *high_list[2:])
+            # 虚拟余额
+            account_balance = self.virtual_balance
+            print(f"[调试] 回测行情数据: 最新收盘价={latest_price}, 近{available_days}日最高价={highest_price}, 虚拟余额={account_balance}")
+            return latest_price, highest_price, account_balance
         else:
-            return (
-                current_price(self.stock, price_type=THType.FTH),
-                bar_high(self.stock, bar_type=BarType.D1, select=1),  # 取最近一个交易日的最高价（可根据需求调整）
-                total_cash()  # 账户总资金
-            )
+            # 实盘下，直接用实时API
+            latest_price = current_price(self.stock, price_type=THType.FTH)
+            # 近20日最高价
+            high_list = [bar_high(self.stock, bar_type=BarType.D1, select=i) for i in range(1, 21)]
+            if len(high_list) == 0:
+                highest_price = latest_price
+            elif len(high_list) == 1:
+                highest_price = high_list[0]
+            else:
+                highest_price = max(high_list[0], high_list[1], *high_list[2:])
+            account_balance = total_cash(currency=Currency.USD)
+            print(f"[调试] 实盘行情数据: 最新价={latest_price}, 近20日最高价={highest_price}, 余额={account_balance}")
+            return latest_price, highest_price, account_balance
+
 
     def should_invest(self, current_time):
         """判断是否进行定投：若从上次定投至今，时间间隔 >= 用户设定的投资周期则触发"""
@@ -118,7 +197,16 @@ class Strategy(StrategyBase):
 
     def execute_investment(self, latest_price, account_balance, quantity=None):
         invest_qty = quantity if quantity is not None else self.investment_qty
-        if (not self.backtest_mode) and (invest_qty * latest_price > account_balance):
+        # 回测模式下模拟资金消耗
+        if self.backtest_mode:
+            if invest_qty * latest_price > self.virtual_balance:
+                print("虚拟余额不足，无法定投")
+                return
+            self.virtual_balance -= invest_qty * latest_price
+            # 回测模式下更新持仓和成本
+            self._total_cost += invest_qty * latest_price
+            self._position += invest_qty
+        elif invest_qty * latest_price > account_balance:
             print("账户余额不足，无法定投")
             return
         order_id = place_market(self.stock, invest_qty, OrderSide.BUY, TimeInForce.DAY)
@@ -179,26 +267,77 @@ class Strategy(StrategyBase):
             # 已经加过这个层，或者更高层，则此次不再加仓
             return 0
         
-        # 如果回撤层数超过数组最大索引，则固定为最后一层
+        # 如果回撤层数超过数组最大索引，则固定为最后一层，并输出风险提示
+        original_layer_index = layer_index
         layer_index = min(layer_index, len(layers) - 1)
+        if original_layer_index > layer_index and self.log_level >= 0:
+            print(f"[风控] 已达最大加仓层级({layer_index})，后续均按最高层倍数加仓，注意风险！")
 
         # 计算加仓数量
         add_qty_float = base_qty * layers[layer_index]
         adjusted_qty = math.ceil(add_qty_float)
-        print(f"目前系统的波动率为： {volatility}")
+        print(f"[调试] 目前系统的波动率为： {volatility}，当前回撤层级: {layer_index}，当前层级表: {layers}")
 
         # 更新已触发层级
         self.current_drawdown_layer = layer_index
-
+        print(f"[调试] 已更新当前回撤层级为: {self.current_drawdown_layer}")
         return adjusted_qty
 
     def execute_add_position(self, latest_price, adjusted_qty, account_balance):
         """执行回撤加仓"""
-        # 若不在回测模式下，需要检查账户余额是否足够
-        if (not self.backtest_mode) and (adjusted_qty * latest_price > account_balance):
+        # 回测模式下模拟资金消耗
+        if self.backtest_mode:
+            if adjusted_qty * latest_price > self.virtual_balance:
+                print("虚拟余额不足，无法加仓")
+                return
+            self.virtual_balance -= adjusted_qty * latest_price
+            # 回测模式下更新持仓和成本
+            self._total_cost += adjusted_qty * latest_price
+            self._position += adjusted_qty
+        elif adjusted_qty * latest_price > account_balance:
             print("账户余额不足，无法加仓")
             return
-
         order_id = place_market(self.stock, adjusted_qty, OrderSide.BUY, TimeInForce.DAY)
-        print(f"加仓下单成功，订单编号: {order_id}")
+        print(f"[调试] 加仓下单成功，订单编号: {order_id}，加仓数量: {adjusted_qty}，下单价格: {latest_price}")
         # 如果需要更新平均成本等信息，可以在此处进行额外处理
+
+    def get_position(self):
+        """获取当前持仓股数"""
+        if self.backtest:
+            return self._position
+        try:
+            return position_holding_qty(self.stock)
+        except Exception as e:
+            print(f"[调试] 获取实盘持仓失败: {str(e)}")
+            return 0
+
+    def get_total_cost(self):
+        """获取累计买入总金额"""
+        if self.backtest:
+            return self._total_cost
+        try:
+            pos = position_holding_qty(self.stock)
+            avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+            return pos * avg_cost
+        except Exception as e:
+            print(f"[调试] 获取实盘总投入失败: {str(e)}")
+            return 0.0
+
+    def get_avg_cost(self):
+        """获取持仓均价"""
+        if self.backtest:
+            pos = self._position
+            return self._total_cost / pos if pos > 0 else 0.0
+        try:
+            return position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+        except Exception as e:
+            print(f"[调试] 获取实盘均价失败: {str(e)}")
+            return 0.0
+
+    def get_market_value(self, latest_price):
+        """获取当前持仓市值"""
+        return self.get_position() * latest_price
+
+    def get_profit(self, latest_price):
+        """获取当前浮动盈亏"""
+        return self.get_market_value(latest_price) - self.get_total_cost()

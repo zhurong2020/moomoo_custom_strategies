@@ -468,8 +468,27 @@ class Strategy(StrategyBase):
                     print(f"迁移 {old_price:.1f} 的 {qty}股 到网格 {nearest_grid:.1f}")
                     current_qty = new_positions.get(nearest_grid, 0)
                     new_positions[nearest_grid] = current_qty + qty
-                    new_records[nearest_grid] = record.copy()
-                    new_records[nearest_grid]['quantity'] = current_qty + qty
+                    # --- 修正：合并明细时累加数量和加权平均买入价 ---
+                    if nearest_grid in new_records:
+                        prev_qty = new_records[nearest_grid].get('quantity', 0)
+                        prev_cost = new_records[nearest_grid].get('buy_price', 0)
+                        new_total_qty = prev_qty + qty
+                        # 加权平均买入价
+                        new_avg_cost = (
+                            (prev_qty * prev_cost + qty * record.get('buy_price', 0)) / new_total_qty
+                            if new_total_qty > 0 else record.get('buy_price', 0)
+                        )
+                        new_records[nearest_grid]['quantity'] = new_total_qty
+                        new_records[nearest_grid]['buy_price'] = new_avg_cost
+                        # update_time 取最新
+                        new_records[nearest_grid]['update_time'] = max(
+                            new_records[nearest_grid].get('update_time', 0),
+                            record.get('update_time', 0)
+                        )
+                        print(f"  [合并] 网格 {nearest_grid:.1f} 持仓数量累计为 {new_total_qty}，加权均价 {new_avg_cost:.3f}")
+                    else:
+                        new_records[nearest_grid] = record.copy()
+                        new_records[nearest_grid]['quantity'] = qty
                 else:
                     print(f"无法为价格 {old_price:.1f} 找到合适的网格")
                     return False

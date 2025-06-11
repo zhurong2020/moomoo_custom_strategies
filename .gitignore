@@ -48,7 +48,7 @@ Thumbs.db
 
 # Project-specific: ignore only raw data/outputs, not docs or code
 # strategies/*/*.csv
-strategies/*/*.txt
+# strategies/*/*.txt
 # strategies/*/data/*.csv
 historical_orders/*.csv
 historical_orders/*.txt
@@ -170,6 +170,6 @@ cython_debug/
 #.idea/
 # personal docs
 # strategies/*/*.csv
-strategies/*/*.txt
+# strategies/*/*.txt
 # strategies/*/data/*.csv
 # strategies/*/data/**/*.csv
