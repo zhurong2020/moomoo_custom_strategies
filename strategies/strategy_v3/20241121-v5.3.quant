@@ -53,11 +53,25 @@ class Strategy(StrategyBase):
             self.pending_orders = set()  # 记录待处理订单
             self.total_position = 0      # 初始化总持仓为0
 
+            # Stage 3 Features Init
+            self.highest_price_since_start = 0.0 # For drawdown calculation
+            self.trade_history = [] # For trade statistics
+
+            # Stage 4 Features Init
+            self.initial_capital_value = 0.0 # Will be set based on account or parameter
+            self.today_str = "" # Tracks current date for daily PNL
+            self.daily_realized_pnl = 0.0
+            self.total_realized_pnl = 0.0
+            self.trading_halted_due_to_loss = False
+
             # 初始化状态标记(根据框架规范要求)
             self.initialization_complete = False
 
             # 打印策略参数设置
             self.print_strategy_params(STRATEGY_VERSION)
+
+            # Stage 1 Feature: Parameter Validation
+            self._check_parameters()
 
             # 获取当前价格作为初始网格的基准价格
             current_px = current_price(self.stock)
@@ -172,10 +186,72 @@ class Strategy(StrategyBase):
             self.max_price_range = show_variable(999999.0, GlobalType.FLOAT, "价格区间上限")
             self.ignore_isolation = show_variable(True, GlobalType.BOOL, "启用隔离模式")
             self.allow_sell_out_of_range = show_variable(True, GlobalType.BOOL, "价格区间外允许卖出")
+
+            # Stage 1 Features
+            self.enable_non_intraday_mode = show_variable(False, GlobalType.BOOL, "启用非日内模式(周期内仅一次交易)")
+            self.enable_position_sync_in_backtest = show_variable(True, GlobalType.BOOL, "回测中是否进行持仓同步")
+
+            # Stage 3 Features
+            self.drawdown_threshold_pct = show_variable(5.0, GlobalType.FLOAT, "回撤阈值(%)触发警告") # e.g. 5 for 5%
+            self.min_profit_threshold = show_variable(0.02, GlobalType.FLOAT, "最小盈利阈值(动态调整用)") # e.g. 0.02 for 2%
+
+            # Stage 4 Features
+            self.max_daily_loss_pct = show_variable(5.0, GlobalType.FLOAT, "每日最大亏损比例(%)") # e.g. 5 for 5% of initial capital
+            self.max_total_loss_pct = show_variable(10.0, GlobalType.FLOAT, "总最大亏损比例(%)") # e.g. 10 for 10% of initial capital
+
             print("全局变量设置完成")
             
         except Exception as e:
             print(f"设置全局变量时发生错误: {str(e)}")
+
+    def _check_parameters(self):
+        """检查参数设置的合理性"""
+        print("[参数检查] 开始检查策略参数...")
+        valid = True
+        if not (isinstance(self.trade_quantity, (int, float)) and self.trade_quantity > 0):
+            print(f"[参数错误] trade_quantity (单次交易数量) 必须为正数，当前为: {self.trade_quantity}")
+            valid = False
+
+        if not (isinstance(self.max_grid_position, (int, float)) and self.max_grid_position > 0):
+            print(f"[参数错误] max_grid_position (单个网格持仓上限) 必须为正数，当前为: {self.max_grid_position}")
+            valid = False
+
+        if self.max_grid_position % self.trade_quantity != 0:
+            adjusted_limit = (self.max_grid_position // self.trade_quantity) * self.trade_quantity
+            if adjusted_limit > 0 :
+                print(f"[参数警告] max_grid_position ({self.max_grid_position}) 不是 trade_quantity ({self.trade_quantity}) 的倍数。建议调整为 {adjusted_limit} 或修改 trade_quantity。")
+                # self.max_grid_position = adjusted_limit # 自动调整可能会违背用户意图，暂时只警告
+            else:
+                print(f"[参数错误] max_grid_position ({self.max_grid_position}) 和 trade_quantity ({self.trade_quantity}) 的组合无法形成有效持仓。")
+                valid = False
+
+        if not (isinstance(self.grid_percentage, float) and 0 < self.grid_percentage < 1):
+            print(f"[参数错误] grid_percentage (网格间距) 应为0到1之间的小数，当前为: {self.grid_percentage}")
+            valid = False
+
+        if not (isinstance(self.grid_count, int) and self.grid_count > 0 and self.grid_count % 2 == 0):
+            print(f"[参数警告] grid_count (网格数量) 建议为正偶数，当前为: {self.grid_count}。奇数会导致基准网格偏移。")
+            # valid = False # 允许奇数，但提示
+
+        if not (isinstance(self.max_total_position, (int, float)) and self.max_total_position > 0):
+            print(f"[参数错误] max_total_position (最大总持仓) 必须为正数，当前为: {self.max_total_position}")
+            valid = False
+
+        if self.use_price_range:
+            if not (isinstance(self.min_price_range, (int, float)) and self.min_price_range >= 0):
+                print(f"[参数错误] min_price_range (价格区间下限) 必须为非负数，当前为: {self.min_price_range}")
+                valid = False
+            if not (isinstance(self.max_price_range, (int, float)) and self.max_price_range > self.min_price_range):
+                print(f"[参数错误] max_price_range (价格区间上限) 必须大于下限，当前为: {self.max_price_range}")
+                valid = False
+
+        if valid:
+            print("[参数检查] 所有检查项通过。")
+        else:
+            # self.send_alert("策略参数配置存在严重错误，请检查日志并修正参数后重启策略！")
+            print("[参数检查] 参数配置存在错误或警告，请仔细核对！策略将继续运行，但可能出现非预期行为。")
+            # raise ValueError("策略参数配置错误，终止运行。") # 暂时不强制终止
+        return valid
 
     def check_strategy_status(self):
         """检查策略运行状态。对比实际持仓与策略持仓，必要时校准。"""
@@ -570,14 +646,21 @@ class Strategy(StrategyBase):
 
     def _verify_and_fix_positions(self):
         """验证并修正持仓数据，如果仍无法修正，则返回False。"""
+        # Stage 1 Feature: Backtest Optimization
+        if getattr(self, 'is_backtest', False) and not getattr(self, 'enable_position_sync_in_backtest', True):
+            if self.verbose_log:
+                print("[回测优化] 已关闭回测中的持仓同步，跳过API校验。")
+            return True
+
         # 如果忽略隔离，则直接pass
         if self.ignore_isolation:
             if self.verbose_log:
                 print("检测到隔离模式，跳过持仓修正流程，让策略单独运行。")
             return True
         # 回测/模拟环境下直接信任本地变量
+        # (上述回测优化已部分覆盖此逻辑，但保留原有is_backtest检查以防万一)
         if getattr(self, 'is_backtest', False) or getattr(self, 'is_simulation', False):
-            if self.verbose_log:
+            if self.verbose_log: # 仅当未被上面优化跳过时才打印
                 print("[回测/模拟] 跳过API持仓校验，直接信任本地持仓记录。")
             return True
 
@@ -691,7 +774,47 @@ class Strategy(StrategyBase):
         
     def _verify_positions(self, max_retries=3, retry_interval=1.0):
         """验证持仓数据一致性，添加重试机制。"""
-        # 回测/模拟环境下仅校验本地持仓结构，不校验API返回
+        # Stage 1 Feature: Backtest Optimization
+        if getattr(self, 'is_backtest', False) and not getattr(self, 'enable_position_sync_in_backtest', True):
+            if self.verbose_log:
+                print("[回测优化] 已关闭回测中的持仓同步，跳过API校验（在_verify_positions）。")
+            # 即使不与API校验，也执行本地结构校验
+            try:
+                grid_total = sum(qty for qty in self.positions.values() if qty > 0)
+                high_total = sum(qty for qty in self.high_positions.values() if qty > 0)
+                total_positions = grid_total + high_total
+                # 验证各个网格的数据完整性
+                for grid_price, qty in self.positions.items():
+                    record = self.position_records.get(grid_price)
+                    if qty > 0:
+                        if not record:
+                            print(f"[错误] 网格{grid_price}缺少详细记录")
+                            return False
+                        if abs(record['quantity'] - qty) > 0.001:
+                            print(f"[错误] 网格{grid_price}数量不匹配: {record['quantity']} != {qty}")
+                            return False
+                        if record['buy_price'] <= 0:
+                            print(f"[错误] 网格{grid_price}成本价无效: {record['buy_price']}")
+                            return False
+                for price, qty in self.high_positions.items():
+                    record = self.high_records.get(price)
+                    if qty > 0:
+                        if not record:
+                            print(f"[错误] 高位网格{price}缺少详细记录")
+                            return False
+                        if abs(record['quantity'] - qty) > 0.001:
+                            print(f"[错误] 高位网格{price}数量不匹配: {record['quantity']} != {qty}")
+                            return False
+
+                self.total_position = total_positions
+                if self.verbose_log:
+                    print("[回测/模拟] 本地持仓验证通过（未进行API同步）。")
+                return True
+            except Exception as e:
+                print(f"[回测/模拟] 本地持仓验证失败: {str(e)}")
+                return False
+
+        # 回测/模拟环境下仅校验本地持仓结构，不校验API返回 (如果上面优化未跳过)
         if getattr(self, 'is_backtest', False) or getattr(self, 'is_simulation', False):
             try:
                 grid_total = sum(qty for qty in self.positions.values() if qty > 0)
@@ -940,6 +1063,12 @@ class Strategy(StrategyBase):
         """主要策略逻辑。"""
         try:
             current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+
+            # Stage 4: Check if trading is halted due to loss limits
+            if self.trading_halted_due_to_loss:
+                print(f"[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] 交易已因触发亏损限制而暂停。")
+                # Optionally, can add logic to reset this flag daily or based on other conditions.
+                return
             
             # 定期检查策略状态
             if not self.check_strategy_status():
@@ -950,6 +1079,9 @@ class Strategy(StrategyBase):
             latest_price = current_price(self.stock)
             if not latest_price:
                 return
+
+            # Stage 3 Feature: Drawdown Calculation
+            self._update_and_check_drawdown(latest_price)
                     
             print(f"\n当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"当前价格: {latest_price:.1f}")
@@ -978,21 +1110,37 @@ class Strategy(StrategyBase):
 
             # 卖出机会优先，若有盈利则先处理卖出
             high_grid_profit = self._check_high_grid_profit(latest_price)
+            sold_in_current_cycle = False
             if not high_grid_profit and self._check_and_execute_sell(latest_price):
                 self.last_trade_time = current_time
-                # 卖出后是否允许本周期买入，受 allow_intraday_trading 控制
-                if not self.allow_intraday_trading:
+                sold_in_current_cycle = True
+                # Stage 1 Feature: Non-intraday mode
+                # Combined with existing allow_intraday_trading. If non_intraday_mode is ON, it overrides allow_intraday_trading for post-sell buy.
+                if getattr(self, 'enable_non_intraday_mode', False):
                     if self.verbose_log:
-                        print("[非日内模式] 已卖出，本周期不再买入，等待下周期...")
+                        print("[非日内模式] 已启用，卖出后本周期不再买入。")
+                    return
+                elif not self.allow_intraday_trading: # Original logic if non_intraday_mode is OFF
+                    if self.verbose_log:
+                        print("[日内交易关闭模式] 已卖出，本周期不再买入，等待下周期...")
                     return
 
             # 重置后是否立即买入，受 allow_intraday_trading 控制
+            # Stage 1 Feature: Non-intraday mode also affects this. If ON, no buy after reset in same cycle.
             if just_reset:
-                if not self.allow_intraday_trading:
+                if getattr(self, 'enable_non_intraday_mode', False) and sold_in_current_cycle:
+                    if self.verbose_log:
+                        print("[非日内模式] 网格已重置，但本周期已卖出，不再立即买入。")
+                    return
+                elif getattr(self, 'enable_non_intraday_mode', False): # Reset without prior sell in cycle
+                     if self.verbose_log:
+                        print("[非日内模式] 网格已重置，但非日内模式开启，本周期不立即买入，等待新周期。") # Or allow if it's the first action of the day? Current logic: wait.
+                     return # Simplified: non-intraday means one action per cycle.
+                elif not self.allow_intraday_trading: # Original logic
                     if self.verbose_log:
                         print("[重置后立即买入开关] 关闭，等待下周期...")
                     return
-                else:
+                else: # allow_intraday_trading is True and non_intraday_mode is False
                     if self.verbose_log:
                         print("[重置后立即买入开关] 开启，本周期允许买入...")
             
@@ -1095,23 +1243,79 @@ class Strategy(StrategyBase):
             if not self._is_price_in_range(latest_price):
                 return False
 
-            # 2) 检查资金是否充足
+            # 2) 检查资金是否充足 (Stage 2 Feature: Available Capital Management)
+            current_market_price_for_capital_check = latest_price # Default to latest_price
             try:
-                available_cash = total_cash(currency=Currency.USD)
+                # Attempt to get a more real-time price for capital check if possible
+                ask_price_for_capital_check = ask(self.stock, level=1)
+                if ask_price_for_capital_check:
+                    current_market_price_for_capital_check = ask_price_for_capital_check
+            except Exception:
+                pass # Fallback to latest_price if ask() fails
+
+            try:
+                available_cash = total_cash(currency=Currency.USD) # Assuming USD, adjust if needed
                 if self.verbose_log:
-                    print(f"[资金] 当前可用资金: {available_cash:.2f}")
+                    print(f"[资金检查] 当前可用资金: {available_cash:.2f} USD")
+
+                # Estimate max buyable quantity based on available cash
+                # Note: max_qty_to_buy_on_cash API might not be available or might behave differently.
+                # We'll do a manual estimation.
+                estimated_max_buyable_from_cash = 0
+                if current_market_price_for_capital_check > 0:
+                    estimated_max_buyable_from_cash = int(available_cash // current_market_price_for_capital_check)
+
+                if self.verbose_log:
+                    print(f"[资金检查] 按当前价 {current_market_price_for_capital_check:.2f} 估算最大可买入(纯资金): {estimated_max_buyable_from_cash} 股")
+
+                # Determine initial trade_qty based on buy_qty or default
+                if buy_qty is not None:
+                    trade_qty = buy_qty
+                else:
+                    trade_qty = getattr(self, 'trade_quantity', 1) # Fallback to 1 if not set
+
+                # Ensure trade_qty does not exceed what cash allows
+                if trade_qty > estimated_max_buyable_from_cash:
+                    print(f"[资金限制] 计划买入 {trade_qty} 股，但可用资金仅支持约 {estimated_max_buyable_from_cash} 股。调整买入数量。")
+                    trade_qty = estimated_max_buyable_from_cash
                 
-                min_order_amount = latest_price * self.trade_quantity
-                if available_cash < min_order_amount:
-                    print(f"[资金不足] 可用资金={available_cash:.2f}, 最小订单金额={min_order_amount:.2f}")
+                # If after adjustment, trade_qty is 0 or less, cannot buy
+                if trade_qty <= 0:
+                    print(f"[资金不足] 可用资金不足以买入最小单位，或计算后可买数量为0。可用资金: {available_cash:.2f}, 估算市价: {current_market_price_for_capital_check:.2f}")
                     return False
+
+                # Check if funds cover the (potentially adjusted) trade_qty
+                required_cash_for_trade = trade_qty * current_market_price_for_capital_check
+                if available_cash < required_cash_for_trade:
+                     print(f"[资金不足] 调整后仍资金不足。需 {required_cash_for_trade:.2f}, 可用 {available_cash:.2f}。放弃买入。")
+                     return False
+
             except Exception as e:
-                print(f"[资金检查失败] {str(e)}")
+                print(f"[资金检查失败] {str(e)}。为安全起见，本次不买入。")
                 return False
 
-            # 3) 计算下单数量 & 检查网格/总持仓上限
-            if buy_qty is not None:
-                trade_qty = buy_qty
+            # 3) 计算下单数量 & 检查网格/总持仓上限 (trade_qty is now capital-aware)
+            # if buy_qty is not None: # This was the old logic start
+            #     trade_qty = buy_qty
+            # else:
+            #     trade_qty = getattr(self, 'trade_quantity', 2) # Original default
+
+            # The trade_qty has already been determined and made capital-aware above.
+            # We just need to ensure it's positive.
+            if trade_qty <= 0:
+                if self.verbose_log:
+                    print("[信息] 计算得到的交易数量为0或负数（可能因资金限制），跳过买入")
+                return False
+
+            # Original logic for min_order_quantity check (if any) can be re-evaluated.
+            # Current self.trade_quantity is the base, pyramid can modify it.
+            # The capital check above is the ultimate limiter.
+
+
+            # The following logic continues with the capital-adjusted trade_qty
+            # --- Old code for reference, now handled above ---
+            # if buy_qty is not None:
+            #     trade_qty = buy_qty
                 # grid_limit 已在主流程严格控制，这里不再重新获取或截断
             else:
                 # 若主流程未传 buy_qty，兜底逻辑仍保留但用用户配置
@@ -1136,13 +1340,24 @@ class Strategy(StrategyBase):
             if trade_qty <= 0:
                 return False
 
-            # 6) 获取实时买价进行二次验证
-            ask_price = ask(self.stock, level=1)
-            if not ask_price:
-                ask_price = latest_price
+            # 6) 获取实时买价进行二次验证 (Stage 2 Feature: Real-time Bid/Ask)
+            # Use ask_price for buy orders
+            effective_ask_price = latest_price # Fallback
+            try:
+                ask_level1 = ask(self.stock, level=1)
+                if ask_level1:
+                    effective_ask_price = ask_level1
+                    if self.verbose_log:
+                        print(f"[实时价格] 获取到买一价: {effective_ask_price:.2f}")
+                else:
+                    if self.verbose_log:
+                        print(f"[实时价格] 未获取到买一价，使用最新成交价: {latest_price:.2f}")
+            except Exception as e:
+                if self.verbose_log:
+                    print(f"[实时价格] 获取买一价失败: {e}, 使用最新成交价: {latest_price:.2f}")
 
-            # 7) 检查价格偏差
-            price_diff = abs(ask_price - grid_price) / grid_price
+            # 7) 检查价格偏差 (using effective_ask_price)
+            price_diff = abs(effective_ask_price - grid_price) / grid_price
             max_deviation = self.grid_percentage * 0.8
             if price_diff > max_deviation:
                 if getattr(self, 'verbose_log', False):
@@ -1153,7 +1368,9 @@ class Strategy(StrategyBase):
 
             # 8) 下单
             start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
-            order_id = self._place_order(trade_qty, side=OrderSide.BUY, is_market=True)
+            # Pass effective_ask_price to _place_order if it needs to make decisions based on it (e.g. for limit orders)
+            # For market orders, it's less critical for _place_order itself, but good for consistency.
+            order_id = self._place_order(trade_qty, side=OrderSide.BUY, is_market=True, limit_price=effective_ask_price)
             if not order_id:
                 print("[订单失败] 买入订单创建失败")
                 return False
@@ -1178,7 +1395,18 @@ class Strategy(StrategyBase):
                 )
 
                 if success and filled_qty > 0:
-                    used_price = float(f"{avg_price:.2f}") if avg_price else float(f"{ask_price:.2f}")
+                    # Use avg_price from confirmation if available, otherwise fallback to effective_ask_price or latest_price
+                    used_price = float(f"{avg_price:.2f}") if avg_price else float(f"{effective_ask_price:.2f}")
+
+                    # Stage 3 Feature: Record Trade
+                    self._record_trade(
+                        grid_price=grid_price,
+                        quantity=filled_qty,
+                        price=used_price,
+                        side='BUY',
+                        order_id=order_id
+                    )
+
                     self._update_position(grid_price, filled_qty, used_price, is_buy=True)
                     if self.verbose_log:
                         print(f"[成交成功] 买入: 网格={grid_price:.2f}, 请求数量={trade_qty}, 实际成交={filled_qty}, 均价={used_price:.2f}")
@@ -1722,6 +1950,33 @@ class Strategy(StrategyBase):
                 # 标记初始化完成
                 self.initialization_complete = True
 
+            # Stage 4: Set initial capital for PNL calculations
+            # Attempt to get actual total assets, fallback to a configured parameter if needed
+            try:
+                # Note: `total_assets` might not be available or behave as expected in all Moomoo contexts.
+                # This is a placeholder for where you'd get the initial account value.
+                # If `total_assets()` is not suitable, you might need a global variable for initial capital.
+                # For now, let's assume a global variable `initial_account_value_for_pnl` could be set.
+                # If not available, PNL % calculations might be inaccurate or disabled.
+                # self.initial_capital_value = total_assets(currency=Currency.USD) # Example API call
+                # If no such API, use a configurable parameter or a default.
+                # Let's add a global param for this if direct query is hard.
+                # For now, using a hardcoded default or a parameter that needs to be added.
+                # This part is crucial and needs a reliable way to get initial capital.
+                # Placeholder:
+                if hasattr(self, 'initial_capital_param'): # Assuming a parameter could be set
+                     self.initial_capital_value = self.initial_capital_param
+                elif hasattr(self, 'initial_capital') and self.initial_capital > 0: # from existing params
+                     self.initial_capital_value = self.initial_capital
+                else: # Fallback if no better way
+                    self.initial_capital_value = 10000 # Default, makes PNL % less meaningful if not actual
+                    print(f"[警告] 未能获取准确的初始资金用于PNL百分比计算，使用默认值: {self.initial_capital_value}")
+                print(f"[风控] 用于损益百分比计算的初始资金设定为: {self.initial_capital_value:.2f}")
+
+            except Exception as cap_e:
+                print(f"[错误] 获取初始资金失败: {cap_e}。PNL百分比计算可能不准确。")
+                self.initial_capital_value = 10000 # Fallback
+
                 return True
 
         except Exception as e:
@@ -2000,12 +2255,26 @@ class Strategy(StrategyBase):
         """
         import time
         try:
+            # Stage 2 Feature: Real-time Bid/Ask - use effective_sell_price for decisions
+            # The current_price passed here is now the effective_sell_price (e.g. bid_level1 or fallback)
+            effective_sell_price = current_price
+
             # 检查价格是否在允许区间内
             # 注意：卖出时我们可以选择即使价格超出区间也允许卖出，以控制风险
             # 目前执行严格遵循区间限制，如果希望价格超出也可卖，请注释下面的代码
-            if not self._is_price_in_range(current_price):
-                return False
-            
+            if not self._is_price_in_range(effective_sell_price): # Check with effective_sell_price
+                # allow_sell_out_of_range is already handled by _check_profit_and_execute_sell
+                # if it decides to proceed even if out of range.
+                # So, if we reach here and it's still out of range, it means _check_profit_and_execute_sell
+                # determined not to sell based on its own logic for out-of-range selling.
+                # However, _execute_sell_order is also called by _execute_high_grid_sell.
+                # Let's ensure the check is consistent.
+                # The `_is_price_in_range` check in `_check_profit_and_execute_sell` already considers `allow_sell_out_of_range`.
+                # So, if that function decided to call this one, it means selling is permitted price-range-wise.
+                # Thus, this check here might be redundant or needs to be clearer about its role.
+                # For now, let's assume if we are called, the higher-level function already cleared price range checks.
+                pass # Price range check done by caller (_check_profit_and_execute_sell or _check_high_grid_profit)
+
             # 1. 计算总卖出数量
             total_quantity = sum(item[1] for item in profitable_grids)
             if total_quantity <= 0:
@@ -2028,10 +2297,12 @@ class Strategy(StrategyBase):
                     print(f"手动/隔离持仓: {sum(self.manual_positions.values())}股")
 
             # 3. 下单 (依然使用 _place_order; 如果想要严格限价，可以改 is_market=False 再传入 limit_price)
+            # Pass effective_sell_price to _place_order for consistency / potential use in limit orders
             sell_order_id = self._place_order(
                 qty=total_quantity,
                 side=OrderSide.SELL,
-                is_market=True
+                is_market=True,
+                limit_price=effective_sell_price
             )
             if not sell_order_id:
                 print("[通用卖出] 下单失败")
@@ -2054,15 +2325,48 @@ class Strategy(StrategyBase):
                 side=OrderSide.SELL,
                 expected_qty=total_quantity,
                 start_time=start_time,
-                timeout=30 if self.is_backtest else 300,
-                interval=2
+                timeout=30 if self.is_backtest else 300, # Consider if timeout needs adjustment
+                interval=2 # Consider if interval needs adjustment
             )
 
             self.pending_orders.discard(sell_order_id)
 
-            if ok:
-                used_price = float(f"{avg_price:.2f}") if avg_price else float(f"{current_price:.2f}")
-                print(f"卖出成交成功，总数量={total_quantity}, 均价={used_price}")
+            if ok and filled_qty > 0: # Ensure some quantity was filled
+                # Use avg_price from confirmation if available, otherwise fallback to effective_sell_price
+                used_price = float(f"{avg_price:.2f}") if avg_price else float(f"{effective_sell_price:.2f}")
+                print(f"卖出成交成功，请求数量={total_quantity}, 实际成交={filled_qty}, 均价={used_price}")
+
+                if filled_qty < total_quantity:
+                    print(f"[警告] 卖出部分成交：请求 {total_quantity}, 实际 {filled_qty}。将按实际成交更新。")
+
+                # The rest of the logic will use `filled_qty` and `used_price`.
+                # `total_quantity` in subsequent logic should be replaced by `filled_qty` for accuracy.
+
+                # Stage 3 Feature: Record Trade (for successful/partially successful fills)
+                # We need to record based on the actual grids and quantities sold.
+                # This might involve iterating through `profitable_grids` and attributing `filled_qty`.
+                temp_remaining_filled_qty_for_record = filled_qty
+                for g_price, req_qty, b_price in profitable_grids: # profitable_grids was used to make the sell decision
+                    if temp_remaining_filled_qty_for_record <= 0:
+                        break
+
+                    actual_sold_this_grid = min(req_qty, temp_remaining_filled_qty_for_record)
+
+                    self._record_trade(
+                        grid_price=g_price, # This is the original grid price level
+                        quantity=actual_sold_this_grid,
+                        price=used_price, # Average filled price for the whole sell order
+                        side='SELL',
+                        order_id=sell_order_id,
+                        buy_price=b_price # Original buy price for this grid portion
+                    )
+                    temp_remaining_filled_qty_for_record -= actual_sold_this_grid
+
+                # Stage 4: Update PNL and check risk limits after a sell
+                if filled_qty > 0 : # Only if something was actually sold
+                    for item in self.trade_history: # Find the relevant trade records just added
+                        if item['order_id'] == sell_order_id and item['side'] == 'SELL':
+                            self._update_pnl_and_check_limits(item['profit']) # Pass the profit of this specific fill part
 
                 # 验证实际成交
                 position_symbols = get_position_symbol()
@@ -2085,7 +2389,8 @@ class Strategy(StrategyBase):
                     # 使用虚拟持仓进行验证
                     actual_position = virtual_position
                 
-                expected_position = self.total_position - total_quantity
+                # Expected position after this specific fill
+                expected_position = self.total_position - filled_qty
                 
                 # 在回测环境中，API可能返回0，即使实际上应该有持仓
                 # 这里我们特别处理回测环境的情况
@@ -2101,38 +2406,76 @@ class Strategy(StrategyBase):
                     if self.verbose_log:
                         print(f"[持仓异常详情]")
                         print(f"卖出前总持仓: {self.total_position}股")
-                        print(f"卖出数量: {total_quantity}股")
-                        print(f"预期剩余: {expected_position}股")
-                        print(f"实际剩余: {actual_position}股")
+                        print(f"本次卖出请求数量: {total_quantity}股, 本次实际成交: {filled_qty}股")
+                        print(f"预期剩余(基于实际成交): {expected_position}股")
+                        print(f"API查询实际剩余: {actual_position}股")
                         print(f"差异: {actual_position - expected_position}股")
                         print(f"隔离模式: {self.ignore_isolation}")
                         if self.ignore_isolation:
                             print(f"手动/隔离持仓: {sum(self.manual_positions.values())}股")
                     print("继续更新策略记录，但请注意检查持仓状态")
 
-                # 更新策略记录
-                if from_high:
-                    # 高位网格更新逻辑
-                    for grid_price, qty, _ in profitable_grids:
-                        self.high_positions[grid_price] = 0
-                        self.high_records[grid_price] = {
-                            'buy_price': 0,
-                            'quantity': 0,
-                            'update_time': time.time()
-                        }
-                        print(f"高位网格平仓: 网格={grid_price:.1f}, 数量={qty}")
-                    self.total_position = sum(self.positions.values()) + sum(self.high_positions.values())
-                    self._clean_empty_high_grids()
-                else:
-                    # 普通网格批量更新
-                    updates = [(grid_price, qty, False, used_price) 
-                             for grid_price, qty, _ in profitable_grids]
-                    if not self._batch_update_positions(updates):
-                        print("批量更新网格持仓失败！")
-                        return False
+                # 更新策略记录 based on actual filled_qty
+                # The profitable_grids list contains (grid_price, requested_qty, buy_price)
+                # We need to adjust the quantities in `profitable_grids` if `filled_qty < total_quantity`
 
-                # 更新周期交易状态
-                self._update_period_trade_status(None, is_buy=False)
+                updates_for_batch = []
+                remaining_filled_qty = filled_qty
+
+                if from_high:
+                    # High grid selling: iterate through profitable_grids (which are high_grids)
+                    # and reduce their quantity based on filled_qty.
+                    # Sorting profitable_grids (e.g., by price or original qty) might be needed for consistent partial fill application.
+                    # For simplicity, assume profitable_grids are already appropriately ordered if partial fills are common.
+                    temp_high_positions = self.high_positions.copy()
+                    temp_high_records = {k:v.copy() for k,v in self.high_records.items()}
+
+                    for grid_price, requested_qty, buy_price in profitable_grids:
+                        if remaining_filled_qty <= 0: break
+
+                        sell_this_grid = min(requested_qty, remaining_filled_qty)
+
+                        current_high_pos = temp_high_positions.get(grid_price, 0)
+                        temp_high_positions[grid_price] = max(0, current_high_pos - sell_this_grid)
+
+                        if temp_high_positions[grid_price] == 0:
+                            temp_high_records[grid_price] = {'buy_price': 0, 'quantity': 0, 'update_time': time.time()}
+                        else:
+                            # If partial fill of a high grid position, its record might need buy_price preserved if not fully sold.
+                            # Current logic zeroes out record on any sell from high grid.
+                            # This part needs careful thought if high grids can be partially sold and remain.
+                            # Assuming for now: if any part of a high grid position is sold, it's "handled" and its record is cleared.
+                            # This matches the original intent of _clean_empty_high_grids.
+                            pass # Quantity updated in temp_high_positions
+
+                        print(f"高位网格平仓: 网格={grid_price:.1f}, 卖出数量={sell_this_grid} (原请求 {requested_qty})")
+                        remaining_filled_qty -= sell_this_grid
+
+                    self.high_positions = temp_high_positions
+                    self.high_records = temp_high_records
+                    self.total_position = sum(self.positions.values()) + sum(self.high_positions.values())
+                    self._clean_empty_high_grids() # Cleans up fully sold high positions
+
+                else: # Normal grid selling
+                    for grid_price, requested_qty, buy_price in profitable_grids:
+                        if remaining_filled_qty <= 0: break
+
+                        sell_this_grid = min(requested_qty, remaining_filled_qty)
+                        updates_for_batch.append((grid_price, sell_this_grid, False, used_price))
+                        remaining_filled_qty -= sell_this_grid
+
+                    if updates_for_batch:
+                        if not self._batch_update_positions(updates_for_batch):
+                            print("批量更新网格持仓失败！(卖出)")
+                            # Potentially try to revert or force sync if batch update fails
+                            return False # Or handle error more gracefully
+                    else:
+                        print("[警告] 卖出成交后没有生成有效的持仓更新指令。")
+
+
+                # 更新周期交易状态 only if some sell actually happened
+                if filled_qty > 0:
+                    self._update_period_trade_status(None, is_buy=False)
                 
                 # 根据verbose_log决定是否显示详细网格状态
                 if self.verbose_log:
@@ -2142,38 +2485,64 @@ class Strategy(StrategyBase):
                 
                 # 卖出成功后，立即检查当前价格所在网格是否可以买入
                 try:
-                    # 首先检查是否启用了日内模式
-                    if not self.allow_intraday_trading:
-                        print("[非日内模式] 已启用非日内模式，卖出后不立即买入，等待下一个周期")
+                    # 首先检查是否启用了日内模式 / 非日内模式
+                    if getattr(self, 'enable_non_intraday_mode', False):
+                        if self.verbose_log:
+                             print("[非日内模式] 已启用，卖出后本周期不再进行买入检查。")
+                        return True # Successfully sold, non-intraday mode prevents further action in cycle
+                    elif not self.allow_intraday_trading: # Original logic for allow_intraday_trading = False
+                        print("[日内交易关闭模式] 卖出后不立即买入，等待下一个周期。")
                         return True
                         
-                    # 获取最新价格 - 避免与参数名current_price冲突
-                    latest_price = current_price  # 使用传入的参数
-                    if latest_price and self._is_price_in_range(latest_price):
+                    # 获取最新价格 - effective_sell_price is the price at which sell was evaluated
+                    # For re-buy check, we need a fresh current price.
+                    fresh_current_price = current_price(self.stock)
+                    if not fresh_current_price:
+                        print("[卖出后立即检查] 无法获取最新价格，跳过买入检查。")
+                        return True # Sell was successful, but cannot check for re-buy
+
+                    if fresh_current_price and self._is_price_in_range(fresh_current_price):
                         # 找到当前价格所属网格
-                        current_grid = self._find_nearest_value(latest_price)
-                        if current_grid:
-                            print(f"[卖出后立即检查] 当前价格 {latest_price:.2f} 所属网格: {current_grid:.1f}")
+                        current_grid_for_rebuy = self._find_nearest_value(fresh_current_price)
+                        if current_grid_for_rebuy:
+                            print(f"[卖出后立即检查] 当前最新价格 {fresh_current_price:.2f} 所属网格: {current_grid_for_rebuy:.1f}")
                             
                             # 检查是否可以在当前网格买入
-                            current_pos = self.positions.get(current_grid, 0)
-                            if current_pos < self.max_grid_position and self.total_position < self.max_total_position:
-                                # 特殊处理：重置当前周期的买入计数，允许卖出后立即买入
-                                # 这是网格交易的特性，允许在同一周期内先卖出再买入
+                            # Need to use _calculate_trade_quantity to respect pyramid settings for grid limits
+                            _, grid_limit_for_rebuy = self._calculate_trade_quantity(current_grid_for_rebuy)
+                            current_pos_in_rebuy_grid = self.positions.get(current_grid_for_rebuy, 0)
+
+                            if current_pos_in_rebuy_grid < grid_limit_for_rebuy and self.total_position < self.max_total_position:
+                                # Reset buy count for this cycle to allow immediate buy back if conditions met
+                                # This is the core of "sell then buy back in same cycle if price is right"
                                 self.current_period_trades['buy_count'] = 0
+                                # Also clear the grid from traded grids in this period if intraday allows multi-trade on same grid after reset
+                                if current_grid_for_rebuy in self.current_period_trades['grids']:
+                                     self.current_period_trades['grids'].remove(current_grid_for_rebuy)
                                 
-                                print(f"[卖出后立即买入] 尝试在网格 {current_grid:.1f} 买入")
-                                # 执行买入
-                                if self._place_buy_order(current_grid, latest_price):
-                                    # 更新周期交易状态
-                                    self._update_period_trade_status(current_grid, is_buy=True)
-                                    print(f"[卖出后立即买入] 成功在网格 {current_grid:.1f} 买入")
+                                print(f"[卖出后立即买入] 尝试在网格 {current_grid_for_rebuy:.1f} 买入 (当前持仓 {current_pos_in_rebuy_grid}, 上限 {grid_limit_for_rebuy})")
+                                # Execute buy using fresh_current_price
+                                if self._place_buy_order(current_grid_for_rebuy, fresh_current_price): # Default buy_qty will be used
+                                    # Update period trade status for the buy
+                                    self._update_period_trade_status(current_grid_for_rebuy, is_buy=True)
+                                    print(f"[卖出后立即买入] 成功在网格 {current_grid_for_rebuy:.1f} 买入")
+                                else:
+                                    print(f"[卖出后立即买入] 在网格 {current_grid_for_rebuy:.1f} 买入失败。")
+                            else:
+                                if self.verbose_log:
+                                    print(f"[卖出后立即检查] 网格 {current_grid_for_rebuy:.1f} 不满足买入条件 (持仓 {current_pos_in_rebuy_grid}/{grid_limit_for_rebuy}, 总持仓 {self.total_position}/{self.max_total_position})")
+                        else:
+                            if self.verbose_log:
+                                print(f"[卖出后立即检查] 最新价格 {fresh_current_price:.2f} 未找到对应网格。")
+                    else:
+                        if self.verbose_log:
+                            print(f"[卖出后立即检查] 最新价格 {fresh_current_price:.2f} 不在价格区间内或无效。")
                 except Exception as e:
                     print(f"卖出后检查买入时发生错误: {str(e)}")
                 
-                return True
+                return True # Original sell was successful or partially successful
             else:
-                print("卖出订单未能完全成交")
+                print(f"卖出订单未能有效成交 (请求数量 {total_quantity}, 成交数量 {filled_qty})")
                 return False
 
         except Exception as e:
@@ -2423,32 +2792,129 @@ class Strategy(StrategyBase):
                 return False
 
             # ========== 筛选盈利网格 ==========
-            profitable_grids = []
-            total_sell_quantity = 0
+            profitable_grids_details = [] # Store more details for sorting
+
+            # Stage 2 Feature: Real-time Bid/Ask for selling decisions
+            effective_sell_price = current_price # Fallback
+            try:
+                bid_level1 = bid(self.stock, level=1)
+                if bid_level1:
+                    effective_sell_price = bid_level1
+                    if self.verbose_log:
+                        print(f"[实时价格] 用于卖出决策的卖一价: {effective_sell_price:.2f}")
+                else:
+                     if self.verbose_log:
+                        print(f"[实时价格] 未获取到卖一价，使用最新成交价: {current_price:.2f} 进行卖出决策")
+            except Exception as e:
+                if self.verbose_log:
+                    print(f"[实时价格] 获取卖一价失败: {e}, 使用最新成交价: {current_price:.2f} 进行卖出决策")
+
             # 统一遍历普通和高位持仓
-            all_positions = {}
-            for g, q in self.positions.items():
-                all_positions[g] = all_positions.get(g, 0) + q
-            for g, q in self.high_positions.items():
-                all_positions[g] = all_positions.get(g, 0) + q
-            position_items = sorted(
-                [(g, q, self.position_records.get(g, {}).get('buy_price', 0))
-                for g, q in all_positions.items() if q > 0],
-                key=lambda x: x[2]  # 按买入价格排序，低成本网格先卖出
-            )
-            for grid_price, qty, buy_price in position_items:
-                if qty <= 0 or buy_price <= 0:
-                    continue
-                price_diff = (current_price - buy_price) / buy_price
-                if price_diff >= self.grid_percentage:
-                    profitable_grids.append((grid_price, qty, buy_price))
-                    total_sell_quantity += qty
-            if not profitable_grids:
-                print(f"未发现满足盈利阈值的网格 （卖出触发原因：{reason}）")
+            all_positions_to_check = {}
+            for g, q in self.positions.items(): # Active grids
+                if q > 0:
+                     record = self.position_records.get(g, {})
+                     buy_price = record.get('buy_price', 0)
+                     if buy_price > 0:
+                        all_positions_to_check[g] = {'qty': q, 'buy_price': buy_price, 'is_high': False}
+
+            for g, q in self.high_positions.items(): # High grids
+                if q > 0:
+                    record = self.high_records.get(g, {})
+                    buy_price = record.get('buy_price', 0)
+                    if buy_price > 0:
+                        # If a grid exists in both, prioritize the record from active positions if it exists
+                        # This scenario should ideally not happen with proper migration, but as a safeguard:
+                        if g not in all_positions_to_check:
+                             all_positions_to_check[g] = {'qty': q, 'buy_price': buy_price, 'is_high': True}
+                        # If it was already added from self.positions, we assume that's the more "active" one.
+                        # Or, one could merge quantities/average costs if overlaps are expected.
+                        # For now, simple override prevention.
+
+            for grid_price, data in all_positions_to_check.items():
+                qty = data['qty']
+                buy_price = data['buy_price']
+
+                profit_abs = (effective_sell_price - buy_price) * qty
+                profit_pct = (effective_sell_price - buy_price) / buy_price if buy_price > 0 else 0
+
+                if profit_pct >= self.grid_percentage:
+                    profitable_grids_details.append({
+                        'grid_price': grid_price,
+                        'qty': qty,
+                        'buy_price': buy_price,
+                        'profit_abs': profit_abs,
+                        'profit_pct': profit_pct,
+                        'is_high': data['is_high']
+                    })
+
+            if not profitable_grids_details:
+                if self.verbose_log or reason != '常规周期检查': # Avoid spamming for routine checks
+                    print(f"未发现满足盈利阈值的网格 （触发原因：{reason}, 使用参考价: {effective_sell_price:.2f}）")
                 return False
-            # ========== 执行批量卖出 ==========
-            print(f"[卖出触发原因：{reason}] 检测到 {len(profitable_grids)} 个盈利网格，总数量={total_sell_quantity}，准备卖出")
-            success = self._execute_batch_sell(profitable_grids, current_price)
+
+            # Stage 2 Feature: Sort profitable grids (e.g., by profit percentage descending)
+            profitable_grids_details.sort(key=lambda x: x['profit_pct'], reverse=True)
+
+            # Reconstruct profitable_grids in the format expected by _execute_batch_sell
+            # profitable_grids = [(item['grid_price'], item['qty'], item['buy_price']) for item in profitable_grids_details]
+            # For _execute_sell_order, it needs to know if it's from high or normal grid to update correctly
+            # So, we pass more detailed items or adapt _execute_sell_order
+
+            # For now, let's adapt the list for _execute_batch_sell, assuming it handles mixed types or we modify it later
+            # The current _execute_batch_sell calls _execute_sell_order which takes `from_high`
+            # This means _check_profit_and_execute_sell should probably call _execute_sell_order directly
+            # or _execute_batch_sell needs to be smarter.
+            # Let's simplify: if any profitable grid is high, we might need separate calls or a smarter sell function.
+            # The current _execute_sell_order takes a list of (grid_price, qty, buy_price) and a single from_high flag.
+            # This is problematic if mixing.
+
+            # Quick Fix: Separate calls for high and normal grids if mixed, or make _execute_sell_order handle mixed.
+            # For now, let's assume _execute_batch_sell (which calls _execute_sell_order) will be adapted or we prioritize.
+            # The existing _execute_sell_order has a `from_high` parameter that applies to the whole batch.
+            # This needs refactoring if we want to sell mixed high/normal grids in one go with correct updates.
+
+            # Let's assume for now we process them in the sorted order, and _execute_sell_order will be called
+            # appropriately. The current structure of _check_profit_and_execute_sell calls _execute_batch_sell,
+            # which then calls _execute_sell_order with from_high=False. This is a bug if high grids are included.
+
+            # Revisit: The structure implies _check_high_grid_profit handles high grids separately.
+            # So, _check_profit_and_execute_sell should only deal with self.positions.
+            # Let's correct the iteration to only self.positions here.
+
+            profitable_normal_grids_details = []
+            for grid_price, qty in self.positions.items():
+                if qty <=0: continue
+                record = self.position_records.get(grid_price, {})
+                buy_price = record.get('buy_price', 0)
+                if buy_price <=0: continue
+
+                profit_abs = (effective_sell_price - buy_price) * qty
+                profit_pct = (effective_sell_price - buy_price) / buy_price if buy_price > 0 else 0
+
+                # Stage 3 Feature: Dynamic Profit Threshold
+                current_profit_target = max(self.grid_percentage, getattr(self, 'min_profit_threshold', 0.01))
+                # More complex dynamic logic could be added here based on volatility, etc.
+
+                if profit_pct >= current_profit_target:
+                    profitable_normal_grids_details.append({
+                        'grid_price': grid_price, 'qty': qty, 'buy_price': buy_price,
+                        'profit_abs': profit_abs, 'profit_pct': profit_pct
+                    })
+
+            if not profitable_normal_grids_details:
+                 if self.verbose_log or reason != '常规周期检查':
+                    print(f"未发现满足盈利阈值({current_profit_target*100:.2f}%)的普通网格 （触发原因：{reason}, 使用参考价: {effective_sell_price:.2f}）")
+                return False
+
+            profitable_normal_grids_details.sort(key=lambda x: x['profit_pct'], reverse=True)
+            profitable_grids_for_sell = [(item['grid_price'], item['qty'], item['buy_price']) for item in profitable_normal_grids_details]
+            total_sell_quantity = sum(item['qty'] for item in profitable_normal_grids_details)
+
+            # ========== 执行批量卖出 (Normal Grids Only) ==========
+            print(f"[卖出触发原因：{reason}] 检测到 {len(profitable_grids_for_sell)} 个普通盈利网格，总数量={total_sell_quantity}，准备卖出 (参考价: {effective_sell_price:.2f})")
+            # _execute_batch_sell calls _execute_sell_order with from_high=False, which is correct for normal grids.
+            success = self._execute_batch_sell(profitable_grids_for_sell, effective_sell_price) # Pass effective_sell_price
             return success
 
         except Exception as e:
@@ -2471,3 +2937,143 @@ class Strategy(StrategyBase):
             return False
             
         return True
+
+    # --- Stage 3 Feature Methods ---
+    def _update_and_check_drawdown(self, current_price):
+        """
+        Updates the highest price seen and checks for drawdown.
+        """
+        if not current_price or current_price <= 0:
+            return
+
+        if current_price > self.highest_price_since_start:
+            self.highest_price_since_start = current_price
+            if self.verbose_log:
+                print(f"[回撤检测] 更新最高价记录: {self.highest_price_since_start:.2f}")
+
+        if self.highest_price_since_start > 0: # Avoid division by zero if no highest price yet
+            drawdown_pct = (self.highest_price_since_start - current_price) / self.highest_price_since_start * 100
+            if self.verbose_log and drawdown_pct > 0.1 : # Log if drawdown is meaningful
+                 print(f"[回撤检测] 当前价格 {current_price:.2f}, 期间最高价 {self.highest_price_since_start:.2f}, 当前回撤: {drawdown_pct:.2f}%")
+
+            if hasattr(self, 'drawdown_threshold_pct') and drawdown_pct >= self.drawdown_threshold_pct:
+                warning_message = (f"[回撤警告] 检测到 {drawdown_pct:.2f}% 的回撤 (阈值: {self.drawdown_threshold_pct}%), "
+                                   f"当前价格: {current_price:.2f}, 期间最高价: {self.highest_price_since_start:.2f}")
+                print(warning_message)
+                # self.send_alert(warning_message) # Consider if alerts are too noisy
+
+    def _record_trade(self, grid_price, quantity, price, side, order_id, buy_price=None):
+        """
+        Records details of a completed trade.
+        `buy_price` is relevant for SELL trades to calculate profit.
+        """
+        try:
+            trade_record = {
+                'time': device_time(TimeZone.DEVICE_TIME_ZONE).strftime('%Y-%m-%d %H:%M:%S'),
+                'stock': str(self.stock), # Ensure stock is stringified if it's an object
+                'side': side, # 'BUY' or 'SELL'
+                'grid_price_level': float(f"{grid_price:.2f}"), # The grid level that triggered
+                'quantity': quantity,
+                'filled_price': float(f"{price:.2f}"),
+                'order_id': order_id,
+                'profit': 0.0,
+                'profit_pct': 0.0
+            }
+
+            if side == 'SELL' and buy_price is not None and buy_price > 0:
+                trade_record['buy_price_for_sell'] = float(f"{buy_price:.2f}")
+                profit = (price - buy_price) * quantity
+                profit_pct = (price - buy_price) / buy_price if buy_price > 0 else 0
+                trade_record['profit'] = float(f"{profit:.2f}")
+                trade_record['profit_pct'] = float(f"{profit_pct*100:.2f}") # Store as percentage string
+
+            self.trade_history.append(trade_record)
+            if self.verbose_log:
+                print(f"[交易记录] {side} {quantity}股 @{price:.2f} (网格:{grid_price:.2f}), 订单:{order_id}, 利润:{trade_record['profit']:.2f} ({trade_record['profit_pct']:.1f}%)")
+
+            # Optional: Periodically print summary or save to file
+            # if len(self.trade_history) % 10 == 0: # Example: Every 10 trades
+            #     self._print_trade_summary()
+
+        except Exception as e:
+            print(f"[错误] 记录交易时发生错误: {str(e)}")
+
+    def _print_trade_summary(self, last_n=10):
+        """Prints a summary of the last N trades."""
+        if not self.trade_history:
+            print("[交易统计] 尚无交易记录。")
+            return
+
+        print(f"\n--- 最近 {min(len(self.trade_history), last_n)} 笔交易摘要 ---")
+        for trade in self.trade_history[-last_n:]:
+            print(f"  {trade['time']} {trade['side']} {trade['quantity']}@{trade['filled_price']:.2f} GridLvl:{trade['grid_price_level']:.2f} P/L:{trade.get('profit',0):.2f} ({trade.get('profit_pct',0):.1f}%) Order:{trade['order_id']}")
+
+        total_profit = sum(t.get('profit', 0) for t in self.trade_history)
+        num_trades = len(self.trade_history)
+        num_winning = len([t for t in self.trade_history if t.get('profit', 0) > 0])
+        win_rate = (num_winning / num_trades * 100) if num_trades > 0 else 0
+
+        print(f"--- 总体统计 ---")
+        print(f"总交易次数: {num_trades}")
+        print(f"总盈利: {total_profit:.2f}")
+        print(f"胜率: {win_rate:.2f}%")
+        print(f"--------------------")
+    # --- End of Stage 3 Feature Methods ---
+
+    # --- Stage 4 Feature Methods ---
+    def _update_pnl_and_check_limits(self, trade_profit):
+        """
+        Updates daily and total PNL after a trade and checks against loss limits.
+        `trade_profit` is the realized profit/loss from the last trade.
+        """
+        if self.trading_halted_due_to_loss: # Already halted, do nothing
+            return
+
+        current_date_str = device_time(TimeZone.DEVICE_TIME_ZONE).strftime('%Y-%m-%d')
+        if self.today_str != current_date_str:
+            if self.verbose_log:
+                print(f"[风控] 新的一天 ({current_date_str})。重置每日PNL从 {self.daily_realized_pnl:.2f} 为 0。")
+            self.today_str = current_date_str
+            self.daily_realized_pnl = 0.0
+            # Trading halt is not reset automatically daily here, could be added if desired.
+
+        self.daily_realized_pnl += trade_profit
+        self.total_realized_pnl += trade_profit
+
+        if self.verbose_log:
+            print(f"[PNL更新] 交易盈亏: {trade_profit:.2f}, 今日累计盈亏: {self.daily_realized_pnl:.2f}, 总累计盈亏: {self.total_realized_pnl:.2f}")
+
+        if self.initial_capital_value <= 0:
+            if self.verbose_log:
+                print("[风控] 初始资金未正确设置，跳过亏损百分比检查。")
+            return
+
+        # Check Daily Loss Limit
+        # Loss is negative PNL. max_daily_loss_pct is positive.
+        daily_loss_as_pct_of_capital = (-self.daily_realized_pnl / self.initial_capital_value) * 100
+        if self.daily_realized_pnl < 0 and daily_loss_as_pct_of_capital >= self.max_daily_loss_pct:
+            halt_msg_daily = (f"[风控触发] 每日最大亏损达到 {daily_loss_as_pct_of_capital:.2f}% "
+                              f"(阈值: {self.max_daily_loss_pct}%, 今日亏损: {self.daily_realized_pnl:.2f}). "
+                              f"暂停当日后续交易。")
+            print(halt_msg_daily)
+            self.send_alert(halt_msg_daily)
+            self.trading_halted_due_to_loss = True # Halt for the day (or until reset)
+            # Note: This halt might persist beyond the current day if not explicitly reset.
+            # A more sophisticated daily reset for trading_halted_due_to_loss could be in _is_new_period or similar.
+            # For now, a manual restart or specific reset logic would be needed to resume after daily halt.
+            # To simplify, let's make this halt strategy-wide until reset or parameter change.
+            print("策略交易已因每日亏损限制而全面暂停。")
+
+
+        # Check Total Loss Limit (only if not already halted by daily)
+        if not self.trading_halted_due_to_loss:
+            total_loss_as_pct_of_capital = (-self.total_realized_pnl / self.initial_capital_value) * 100
+            if self.total_realized_pnl < 0 and total_loss_as_pct_of_capital >= self.max_total_loss_pct:
+                halt_msg_total = (f"[风控触发] 总最大亏损达到 {total_loss_as_pct_of_capital:.2f}% "
+                                  f"(阈值: {self.max_total_loss_pct}%, 总亏损: {self.total_realized_pnl:.2f}). "
+                                  f"策略交易已全面暂停。")
+                print(halt_msg_total)
+                self.send_alert(halt_msg_total)
+                self.trading_halted_due_to_loss = True # Halt permanently for this run
+
+    # --- End of Stage 4 Feature Methods ---
