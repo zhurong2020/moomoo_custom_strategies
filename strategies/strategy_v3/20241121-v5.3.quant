@@ -13,9 +13,9 @@ class Strategy(StrategyBase):
         print(f"网格数量: {self.grid_count}")
         print(f"价格区间: [{self.min_price_range:.2f}-{self.max_price_range:.2f}]")
         print(f"隔离模式: {'开启' if self.ignore_isolation else '关闭'}")
-        print(f"日内模式: {'开启' if self.allow_intraday_trading else '关闭'}")
+        print(f"非日内模式: {'开启' if self.enable_non_intraday_mode else '关闭'}")
         print(f"金字塔加仓: {'开启' if self.use_pyramid else '关闭'}")
-        print(f"网格重置后立即尝试买入: {'是' if self.allow_intraday_trading else '否'}")
+        print(f"网格重置后立即尝试买入: {'否' if self.enable_non_intraday_mode else '是'}")
         print(f"价格区间外允许卖出: {'是' if self.allow_sell_out_of_range else '否'}")
         print(f"详细日志模式: {'开启' if getattr(self, 'verbose_log', False) else '关闭'}")
 
@@ -58,6 +58,11 @@ class Strategy(StrategyBase):
 
             # 打印策略参数设置
             self.print_strategy_params(STRATEGY_VERSION)
+
+            # 验证参数
+            if not self._check_parameters():
+                # 参数验证失败，直接返回，initialize方法会返回False
+                return False
 
             # 获取当前价格作为初始网格的基准价格
             current_px = current_price(self.stock)
@@ -162,8 +167,9 @@ class Strategy(StrategyBase):
             self.trade_record_days = show_variable(31, GlobalType.INT, "成交记录查询天数(1-31)")
             self.position_sync_retry = show_variable(3, GlobalType.INT, "持仓同步重试次数")
             self.is_backtest = show_variable(True, GlobalType.BOOL, "是否回测环境")
+            self.enable_position_sync_in_backtest = show_variable(False, GlobalType.BOOL, "回测时是否进行持仓同步(可提速)")
         
-            self.allow_intraday_trading = show_variable(True, GlobalType.BOOL, "允许日内多次买卖/重置后立即买入")
+            self.enable_non_intraday_mode = show_variable(False, GlobalType.BOOL, "启用非日内模式(卖出后本周期不买入)")
             self.verbose_log = show_variable(False, GlobalType.BOOL, "是否输出详细调试日志（仅调试时打开）")
             self.use_pyramid = show_variable(False, GlobalType.BOOL, "是否启用金字塔加仓")
 
@@ -177,12 +183,55 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"设置全局变量时发生错误: {str(e)}")
 
+    def _check_parameters():
+        """初始化后检查参数设置的合理性。"""
+        print("\n[参数验证]")
+        try:
+            if self.trade_quantity <= 0:
+                raise ValueError("trade_quantity (单次交易数量) 必须为正数")
+            if self.max_total_position <= 0:
+                raise ValueError("max_total_position (最大总持仓) 必须为正数")
+            if self.max_grid_position <= 0:
+                raise ValueError("max_grid_position (单个网格持仓上限) 必须为正数")
+            if self.grid_percentage <= 0:
+                raise ValueError("grid_percentage (网格间距) 必须为正数")
+            if self.grid_count <= 0:
+                raise ValueError("grid_count (网格数量) 必须为正数")
+
+            if self.max_total_position < self.trade_quantity:
+                raise ValueError("max_total_position (最大总持仓) 不能小于 trade_quantity (单次交易数量)")
+            
+            if self.max_grid_position < self.trade_quantity:
+                print(f"[参数警告] max_grid_position ({self.max_grid_position}) 小于 trade_quantity ({self.trade_quantity})，可能导致无法建仓。")
+
+            if self.max_grid_position % self.trade_quantity != 0:
+                print(f"[参数警告] max_grid_position ({self.max_grid_position}) 不是 trade_quantity ({self.trade_quantity}) 的整数倍，可能导致网格持仓无法达到上限。")
+
+            if self.use_price_range and self.min_price_range >= self.max_price_range:
+                raise ValueError("启用价格区间时, min_price_range (价格区间下限) 必须小于 max_price_range (价格区间上限)")
+            
+            if not (1 <= self.trade_record_days <= 31):
+                print(f"[参数警告] trade_record_days ({self.trade_record_days}) 超出建议范围 [1, 31]，可能影响持仓恢复的准确性。")
+
+            print("参数验证通过。")
+            return True
+        except ValueError as e:
+            print(f"[参数错误] {str(e)}")
+            # 在Moomoo框架中，抛出异常可能会导致策略停止，这里只打印错误并返回False
+            return False
+
     def check_strategy_status(self):
         """检查策略运行状态。对比实际持仓与策略持仓，必要时校准。"""
         try:
             current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
             running_hours = (current_time - self.start_time).total_seconds() / 3600
             
+            # 如果是回测且禁用了持仓同步，则跳过所有API检查
+            if getattr(self, 'is_backtest', False) and not getattr(self, 'enable_position_sync_in_backtest', False):
+                if self.verbose_log:
+                    print("[回测优化] 跳过策略状态API检查。")
+                return True
+
             # 带重试机制的持仓获取（最多重试3次）
             position_symbols = None
             retry_count = 0
@@ -288,11 +337,11 @@ class Strategy(StrategyBase):
     def _recover_positions(self):
         """恢复已有持仓状态，彻底执行手动隔离模式。将所有历史持仓全部迁移到manual_positions/manual_records，并清空策略相关变量。"""
         # 回测/模拟环境下直接清空隔离持仓，无需API同步
-        if getattr(self, 'is_backtest', False) or getattr(self, 'is_simulation', False):
+        if getattr(self, 'is_backtest', False) and not getattr(self, 'enable_position_sync_in_backtest', False):
             self.manual_positions = {}
             self.manual_records = {}
             if self.verbose_log:
-                print("[回测/模拟] 跳过API持仓恢复，直接清空隔离持仓。")
+                print("[回测优化] 跳过API持仓恢复，直接清空隔离持仓。")
             return True
         try:
             # 带重试机制的持仓获取（最多重试3次）
@@ -576,9 +625,9 @@ class Strategy(StrategyBase):
                 print("检测到隔离模式，跳过持仓修正流程，让策略单独运行。")
             return True
         # 回测/模拟环境下直接信任本地变量
-        if getattr(self, 'is_backtest', False) or getattr(self, 'is_simulation', False):
+        if getattr(self, 'is_backtest', False) and not getattr(self, 'enable_position_sync_in_backtest', False):
             if self.verbose_log:
-                print("[回测/模拟] 跳过API持仓校验，直接信任本地持仓记录。")
+                print("[回测优化] 跳过API持仓校验，直接信任本地持仓记录。")
             return True
 
         try:
@@ -692,7 +741,7 @@ class Strategy(StrategyBase):
     def _verify_positions(self, max_retries=3, retry_interval=1.0):
         """验证持仓数据一致性，添加重试机制。"""
         # 回测/模拟环境下仅校验本地持仓结构，不校验API返回
-        if getattr(self, 'is_backtest', False) or getattr(self, 'is_simulation', False):
+        if getattr(self, 'is_backtest', False) and not getattr(self, 'enable_position_sync_in_backtest', False):
             try:
                 grid_total = sum(qty for qty in self.positions.values() if qty > 0)
                 high_total = sum(qty for qty in self.high_positions.values() if qty > 0)
@@ -912,13 +961,13 @@ class Strategy(StrategyBase):
 
     def _can_trade_in_period(self, grid_price, is_buy=True):
         """检查是否可以在当前周期交易。"""
-        if not self.allow_intraday_trading:
-            # 非日内模式下，每个周期只允许一次买入或卖出
+        # 非日内模式下，每个周期只允许一次买入或卖出
+        if self.enable_non_intraday_mode:
             if is_buy and self.current_period_trades['buy_count'] > 0:
-                print(f"当前周期已执行过买入操作")
+                print(f"[非日内模式] 当前周期已执行过买入操作")
                 return False
             if not is_buy and self.current_period_trades['sell_count'] > 0:
-                print(f"当前周期已执行过卖出操作")
+                print(f"[非日内模式] 当前周期已执行过卖出操作")
                 return False
         else:
             # 日内模式下，每个网格在每个周期只允许一次交易
@@ -980,21 +1029,21 @@ class Strategy(StrategyBase):
             high_grid_profit = self._check_high_grid_profit(latest_price)
             if not high_grid_profit and self._check_and_execute_sell(latest_price):
                 self.last_trade_time = current_time
-                # 卖出后是否允许本周期买入，受 allow_intraday_trading 控制
-                if not self.allow_intraday_trading:
+                # 卖出后是否允许本周期买入，受 enable_non_intraday_mode 控制
+                if self.enable_non_intraday_mode:
                     if self.verbose_log:
                         print("[非日内模式] 已卖出，本周期不再买入，等待下周期...")
                     return
 
-            # 重置后是否立即买入，受 allow_intraday_trading 控制
+            # 重置后是否立即买入，受 enable_non_intraday_mode 控制
             if just_reset:
-                if not self.allow_intraday_trading:
+                if self.enable_non_intraday_mode:
                     if self.verbose_log:
-                        print("[重置后立即买入开关] 关闭，等待下周期...")
+                        print("[非日内模式] 网格已重置，等待下周期买入...")
                     return
                 else:
                     if self.verbose_log:
-                        print("[重置后立即买入开关] 开启，本周期允许买入...")
+                        print("[日内模式] 网格已重置，本周期允许买入...")
             
                 
             # 找到当前价格所属网格
