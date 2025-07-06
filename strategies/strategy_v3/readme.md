@@ -1,4 +1,4 @@
-# 网格交易策略分析 V5.3.12
+# 网格交易策略分析 V5.3.13
 
 ## 风险声明
 
@@ -337,9 +337,13 @@
 
 ## 9. 策略版本更新日志
 
+### V5.3.13 (2024-11-21)
+
+*   **价格偏差容忍度：** 新增 `price_deviation_tolerance_multiplier` 全局变量，允许用户调整市价与网格价格的最大偏离容忍度，以更精细地控制成交价格。
+
 ### V5.3.12 (2024-11-21)
 
-*   **代码清理：** 移除了未使用的 `max_capital_usage` 变量，以及 `_check_profit_before_reset`、`_execute_batch_sell`、`_clean_empty_high_grids` 等冗余方法，并修正了 `handle_data` 中重复的 `_check_high_grid_profit` 调用，使代码更加精简高效。
+*   **代码清理：** 移除了未使用的 `max_capital_usage` 变量，以及 `_check_profit_before_reset`、`_execute_batch_sell`、`_clean_empty_high_grids` 等冗余方法，并修正了 `handle_data` 中重复的 `_check_high_grid_profit` 调用，使代码更加精简高效.
 
 ### V5.3.10 (2024-11-21)
 

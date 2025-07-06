@@ -30,7 +30,7 @@ class Strategy(StrategyBase):
         if not hasattr(self, 'max_total_position'):
             self.global_variables()
         
-        STRATEGY_VERSION = "v5.3.12"
+        STRATEGY_VERSION = "v5.3.13"
         try:
             self._position_lock = threading.RLock()
             self.start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
@@ -177,6 +177,7 @@ class Strategy(StrategyBase):
             self.max_price_range = show_variable(999999.0, GlobalType.FLOAT, "价格区间上限")
             self.ignore_isolation = show_variable(True, GlobalType.BOOL, "启用隔离模式")
             self.allow_sell_out_of_range = show_variable(True, GlobalType.BOOL, "价格区间外允许卖出")
+            self.price_deviation_tolerance_multiplier = show_variable(0.8, GlobalType.FLOAT, "价格偏差容忍度乘数(0-1)")
             print("全局变量设置完成")
             
         except Exception as e:
@@ -1182,7 +1183,7 @@ class Strategy(StrategyBase):
 
             # 7) 检查价格偏差
             price_diff = abs(ask_price - grid_price) / grid_price
-            max_deviation = self.grid_percentage * 0.8
+            max_deviation = self.grid_percentage * self.price_deviation_tolerance_multiplier
             if price_diff > max_deviation:
                 if getattr(self, 'verbose_log', False):
                     print(f"[风控] 当前市价与网格价格偏离较大，本次不买入（属正常风控），如市价回归将自动买入。市价={ask_price:.2f}, 网格={grid_price:.2f}")
