@@ -30,7 +30,7 @@ class Strategy(StrategyBase):
         if not hasattr(self, 'max_total_position'):
             self.global_variables()
         
-        STRATEGY_VERSION = "v5.3.11"
+        STRATEGY_VERSION = "v5.3.12"
         try:
             self._position_lock = threading.RLock()
             self.start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
@@ -161,7 +161,6 @@ class Strategy(StrategyBase):
             self.max_grid_position = show_variable(80, GlobalType.INT, "单个网格持仓上限")
             self.grid_percentage = show_variable(0.03, GlobalType.FLOAT, "网格间距/盈利标准")
             self.grid_count = show_variable(10, GlobalType.INT, "网格数量")
-            self.max_capital_usage = show_variable(0.9, GlobalType.FLOAT, "最大资金使用率")
 
             self.use_trade_records = show_variable(True, GlobalType.BOOL, "使用成交记录恢复持仓")
             self.trade_record_days = show_variable(31, GlobalType.INT, "成交记录查询天数(1-31)")
@@ -468,15 +467,6 @@ class Strategy(StrategyBase):
             print(f"  价格={price:.2f}, 数量={qty}, 成本={cost:.2f}")
         print(f"手动/隔离仓位总数: {total_manual}")
     
-    def _check_profit_before_reset(self, current_price):
-        """在网格重置前检查是否有盈利机会，如果有就卖出。"""
-        print("[_check_profit_before_reset] -> 调用通用检查, skip_period_check=True")
-        return self._check_profit_and_execute_sell(
-            current_price=current_price,
-            skip_period_check=True,
-            reason='reset'
-        )
-
     def _migrate_positions_to_new_grids(self, actual_position, old_positions, old_records, new_grid_prices):
         """将持仓迁移到新网格,合并普通/高位同价位持仓，避免重复。"""
         try:
@@ -1016,7 +1006,7 @@ class Strategy(StrategyBase):
             if hasattr(self, 'just_initialized') and self.just_initialized:
                 self.just_initialized = False
             else:
-                high_grid_profit = self._check_high_grid_profit(latest_price)
+                pass # 第一次检查高位网格盈利已在下方进行
             
             # 检查是否需要重置网格
             just_reset = False
@@ -1577,21 +1567,6 @@ class Strategy(StrategyBase):
             print(f"检查高位网格盈利失败: {str(e)}")
             return False
     
-    def _clean_empty_high_grids(self):
-        """
-        清理空仓的高位网格记录。
-        """
-        try:
-            empty_grids = [grid for grid, qty in self.high_positions.items() 
-                           if qty <= 0 or grid in self.positions]
-            for grid in empty_grids:
-                if grid in self.high_positions:
-                    print(f"清理高位网格: {grid}")
-                    self.high_positions.pop(grid)
-                    self.high_records.pop(grid)
-        except Exception as e:
-            print(f"清理高位网格时发生错误: {str(e)}")
-
     def _initialize_grids(self, base_price):
         """
         初始化或重置网格。
@@ -1865,20 +1840,6 @@ class Strategy(StrategyBase):
             status_str = "[高位] " + status_str
 
         return status_str
-
-    def _execute_high_grid_sell(self, profitable_grids, current_price):
-        """
-        执行高位网格卖出。
-        """
-        print("[_execute_high_grid_sell] -> 调用通用卖出 _execute_sell_order(..., from_high=True)")
-        return self._execute_sell_order(profitable_grids, current_price, from_high=True)
-
-    def _execute_batch_sell(self, profitable_grids, current_price):
-        """
-        执行批量卖出。
-        """
-        print("[_execute_batch_sell] -> 调用通用卖出 _execute_sell_order(..., from_high=False)")
-        return self._execute_sell_order(profitable_grids, current_price, from_high=False)
 
     def _check_and_execute_sell(self, current_price):
         """

@@ -1,4 +1,4 @@
-# 网格交易策略分析 V5.3.11
+# 网格交易策略分析 V5.3.12
 
 ## 风险声明
 
@@ -337,11 +337,9 @@
 
 ## 9. 策略版本更新日志
 
-### V5.3.11 (2024-11-21)
+### V5.3.12 (2024-11-21)
 
-*   **参数验证：** 引入 `_check_parameters` 方法，在策略初始化时对用户设置的参数进行严格校验，确保参数合理性，提高策略健壮性。
-*   **回测优化选项：** 新增 `enable_position_sync_in_backtest` 全局变量，允许用户在回测模式下选择是否进行持仓同步，以显著提升回测速度。
-*   **非日内模式命名统一：** 将 `allow_intraday_trading` 参数重命名为 `enable_non_intraday_mode`，并反转其逻辑，使其命名更直观，符合需求文档的约定。
+*   **代码清理：** 移除了未使用的 `max_capital_usage` 变量，以及 `_check_profit_before_reset`、`_execute_batch_sell`、`_clean_empty_high_grids` 等冗余方法，并修正了 `handle_data` 中重复的 `_check_high_grid_profit` 调用，使代码更加精简高效。
 
 ### V5.3.10 (2024-11-21)
 
