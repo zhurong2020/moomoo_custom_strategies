@@ -21,7 +21,6 @@ class Strategy(StrategyBase):
 
     def initialize(self):
         """初始化策略。"""
-        import threading
         import datetime
         import time
         # Contract对象和API由moomoo量化平台自动注入，无需import，类型判断用type(obj).__name__ == "Contract"
@@ -32,7 +31,6 @@ class Strategy(StrategyBase):
         
         STRATEGY_VERSION = "v5.3.13"
         try:
-            self._position_lock = threading.RLock()
             self.start_time = device_time(TimeZone.DEVICE_TIME_ZONE)
             self.is_initialized = False
             self.current_period_trades = {
@@ -183,7 +181,7 @@ class Strategy(StrategyBase):
         except Exception as e:
             print(f"设置全局变量时发生错误: {str(e)}")
 
-    def _check_parameters():
+    def _check_parameters(self):
         """初始化后检查参数设置的合理性。"""
         print("\n[参数验证]")
         try:
@@ -1129,7 +1127,6 @@ class Strategy(StrategyBase):
         Returns:
             bool: 买入是否成功
         """
-        import time
         try:
             # 1) 再次检查价格是否在允许区间内
             if not self._is_price_in_range(latest_price):
@@ -1358,7 +1355,6 @@ class Strategy(StrategyBase):
         """
         子函数：查询并返回按时间排序的有效成交列表。
         """
-        import datetime
         # 1. 动态计算查询区间
         today = device_time(TimeZone.DEVICE_TIME_ZONE).date()
         start_date = today - datetime.timedelta(days=self.trade_record_days)
@@ -1589,165 +1585,163 @@ class Strategy(StrategyBase):
                 print("基准价格超出允许区间，跳过网格初始化")
                 return False
 
-            with self._position_lock:
-                # 使用新的API获取实际持仓
-                position_symbols = get_position_symbol()
-                actual_position = 0
-                if position_symbols and self.stock in position_symbols:
-                    actual_position = position_holding_qty(self.stock)
-                if self.verbose_log:
-                    print(f"当前实际持仓: {actual_position}股")
+            # 使用新的API获取实际持仓
+            position_symbols = get_position_symbol()
+            actual_position = 0
+            if position_symbols and self.stock in position_symbols:
+                actual_position = position_holding_qty(self.stock)
+            if self.verbose_log:
+                print(f"当前实际持仓: {actual_position}股")
 
-                # 计算网格价格列表
-                new_grid_prices = self._generate_grid_prices(
-                    base_price=base_price,
-                    grid_num=self.grid_count,  # 使用self.grid_count替代grid_num
-                    grid_percentage=self.grid_percentage,
-                    keep_digit=1
-                )
+            # 计算网格价格列表
+            new_grid_prices = self._generate_grid_prices(
+                base_price=base_price,
+                grid_num=self.grid_count,  # 使用self.grid_count替代grid_num
+                grid_percentage=self.grid_percentage,
+                keep_digit=1
+            )
 
-                if not new_grid_prices:
-                    print("网格生成失败，跳过。")
-                    return False
-                
-                # 额外检查网格价格列表
-                if not isinstance(new_grid_prices, list):
-                    print(f"错误: 生成的网格价格不是列表类型，而是 {type(new_grid_prices)}")
-                    return False
-                
-                # 确保所有网格价格都是数值类型
-                valid_prices = []
-                for p in new_grid_prices:
-                    if isinstance(p, (int, float)):
-                        valid_prices.append(float(p))
-                    else:
-                        print(f"警告: 跳过非数值类型的网格价格: {p}，类型: {type(p)}")
-                
-                if not valid_prices:
-                    print("错误: 没有有效的网格价格")
-                    return False
-                
-                new_grid_prices = valid_prices
-                
-                self.base_grid = int(base_price * 10 + 0.5)/10.0
-
-                # 清理并验证现有持仓数据
-                cleaned_positions = {}
-                cleaned_records = {}
-                for price, qty in self.positions.items():
-                    if isinstance(price, (int, float)) and qty > 0:
-                        cleaned_positions[float(price)] = qty
-                        if price in self.position_records and isinstance(self.position_records[price], dict):
-                            cleaned_records[float(price)] = self.position_records[price].copy()
-                        else:
-                            cleaned_records[float(price)] = {
-                                'buy_price': float(price),
-                                'quantity': qty,
-                                'update_time': time.time()
-                            }
-                
-                # 保存当前所有持仓信息（包括普通网格和高位网格）
-                old_positions = cleaned_positions
-                old_records = {k: v.copy() for k, v in cleaned_records.items()}
-                old_high_positions = {float(k): v for k, v in self.high_positions.items() 
-                                   if isinstance(k, (int, float)) and v > 0}
-                old_high_records = {float(k): v.copy() for k, v in self.high_records.items() 
-                                 if isinstance(k, (int, float)) and v.get('quantity', 0) > 0}
-
-                # 找到新网格的最高价格
-                if new_grid_prices:
-                    highest_new_grid = float(new_grid_prices[0])
-                    
-                    for price in new_grid_prices[1:]:
-                        price = float(price)  # 确保是浮点数
-                        if price > highest_new_grid:
-                            highest_new_grid = price
-                            
+            if not new_grid_prices:
+                print("网格生成失败，跳过。")
+                return False
+            
+            # 额外检查网格价格列表
+            if not isinstance(new_grid_prices, list):
+                print(f"错误: 生成的网格价格不是列表类型，而是 {type(new_grid_prices)}")
+                return False
+            
+            # 确保所有网格价格都是数值类型
+            valid_prices = []
+            for p in new_grid_prices:
+                if isinstance(p, (int, float)):
+                    valid_prices.append(float(p))
                 else:
-                    print("错误: 无法确定最高网格价格")
-                    return False
+                    print(f"警告: 跳过非数值类型的网格价格: {p}，类型: {type(p)}")
+            
+            if not valid_prices:
+                print("错误: 没有有效的网格价格")
+                return False
+            
+            new_grid_prices = valid_prices
+            
+            self.base_grid = int(base_price * 10 + 0.5)/10.0
 
-                # 初始化新的数据结构
-                new_high_positions = {}
-                new_high_records = {}
-                self.positions = {}
-                self.position_records = {}
+            # 清理并验证现有持仓数据
+            cleaned_positions = {}
+            cleaned_records = {}
+            for price, qty in self.positions.items():
+                if isinstance(price, (int, float)) and qty > 0:
+                    cleaned_positions[float(price)] = qty
+                    if price in self.position_records and isinstance(self.position_records[price], dict):
+                        cleaned_records[float(price)] = self.position_records[price].copy()
+                    else:
+                        cleaned_records[float(price)] = {
+                            'buy_price': float(price),
+                            'quantity': qty,
+                            'update_time': time.time()
+                        }
+            
+            # 保存当前所有持仓信息（包括普通网格和高位网格）
+            old_positions = cleaned_positions
+            old_records = {k: v.copy() for k, v in cleaned_records.items()}
+            old_high_positions = {float(k): v for k, v in self.high_positions.items() 
+                               if isinstance(k, (int, float)) and v > 0}
+            old_high_records = {float(k): v.copy() for k, v in self.high_records.items() 
+                             if isinstance(k, (int, float)) and v.get('quantity', 0) > 0}
 
-                # 处理原有高位网格
-                for price, qty in old_high_positions.items():
-                    if qty > 0:
-                        new_high_positions[float(price)] = qty
-                        if price in old_high_records:
-                            new_high_records[float(price)] = old_high_records[price].copy()
+            # 找到新网格的最高价格
+            if new_grid_prices:
+                highest_new_grid = float(new_grid_prices[0])
+                
+                for price in new_grid_prices[1:]:
+                    price = float(price)  # 确保是浮点数
+                    if price > highest_new_grid:
+                        highest_new_grid = price
+                        
+            else:
+                print("错误: 无法确定最高网格价格")
+                return False
+
+            # 初始化新的数据结构
+            new_high_positions = {}
+            new_high_records = {}
+            self.positions = {}
+            self.position_records = {}
+
+            # 处理原有高位网格
+            for price, qty in old_high_positions.items():
+                if qty > 0:
+                    new_high_positions[float(price)] = qty
+                    if price in old_high_records:
+                        new_high_records[float(price)] = old_high_records[price].copy()
+                    else:
+                        new_high_records[float(price)] = {
+                            'buy_price': float(price),
+                            'quantity': qty,
+                            'update_time': time.time()
+                        }
+
+            # 处理原有普通网格
+            for price, qty in old_positions.items():
+                price = float(price)  # 确保是浮点数
+                if qty > 0:
+                    if price > highest_new_grid:
+                        # 转为高位网格
+                        new_high_positions[price] = qty
+                        if price in old_records:
+                            new_high_records[price] = old_records[price].copy()
                         else:
-                            new_high_records[float(price)] = {
-                                'buy_price': float(price),
+                            new_high_records[price] = {
+                                'buy_price': price,
                                 'quantity': qty,
                                 'update_time': time.time()
                             }
-
-                # 处理原有普通网格
-                for price, qty in old_positions.items():
-                    price = float(price)  # 确保是浮点数
-                    if qty > 0:
-                        if price > highest_new_grid:
-                            # 转为高位网格
-                            new_high_positions[price] = qty
+                    else:
+                        # 找到最近的新网格
+                        nearest_grid = self._find_nearest_value(price, new_grid_prices)
+                        if nearest_grid:
+                            self.positions[float(nearest_grid)] = qty
                             if price in old_records:
-                                new_high_records[price] = old_records[price].copy()
+                                self.position_records[float(nearest_grid)] = old_records[price].copy()
                             else:
-                                new_high_records[price] = {
+                                self.position_records[float(nearest_grid)] = {
                                     'buy_price': price,
                                     'quantity': qty,
                                     'update_time': time.time()
                                 }
-                        else:
-                            # 找到最近的新网格
-                            nearest_grid = self._find_nearest_value(price, new_grid_prices)
-                            if nearest_grid:
-                                self.positions[float(nearest_grid)] = qty
-                                if price in old_records:
-                                    self.position_records[float(nearest_grid)] = old_records[price].copy()
-                                else:
-                                    self.position_records[float(nearest_grid)] = {
-                                        'buy_price': price,
-                                        'quantity': qty,
-                                        'update_time': time.time()
-                                    }
 
-                # 初始化新的网格价格记录
-                self.grid_prices = [float(p) for p in new_grid_prices]
-                for price in new_grid_prices:
-                    if price not in self.position_records:
-                        self.position_records[float(price)] = {
-                            'buy_price': 0,
-                            'quantity': 0,
-                            'update_time': time.time()
-                        }
+            # 初始化新的网格价格记录
+            self.grid_prices = [float(p) for p in new_grid_prices]
+            for price in new_grid_prices:
+                if price not in self.position_records:
+                    self.position_records[float(price)] = {
+                        'buy_price': 0,
+                        'quantity': 0,
+                        'update_time': time.time()
+                    }
 
-                # 更新高位网格信息
-                self.high_positions = new_high_positions
-                self.high_records = new_high_records
+            # 更新高位网格信息
+            self.high_positions = new_high_positions
+            self.high_records = new_high_records
 
-                # 更新总持仓
-                self.total_position = sum(self.positions.values()) + sum(new_high_positions.values())
+            # 更新总持仓
+            self.total_position = sum(self.positions.values()) + sum(new_high_positions.values())
 
-                if self.verbose_log:
-                    print(f"\n网格重置后状态:")
-                    print(f"普通网格持仓: {sum(self.positions.values())}股")
-                    print(f"高位网格持仓: {sum(new_high_positions.values())}股")
-                    print(f"总持仓: {self.total_position}股")
-                    for price, qty in sorted(new_high_positions.items()):
-                        if qty > 0:
-                            print(f"  高位网格={price:.1f}, 数量={qty}")
+            if self.verbose_log:
+                print(f"\n网格重置后状态:")
+                print(f"普通网格持仓: {sum(self.positions.values())}股")
+                print(f"高位网格持仓: {sum(new_high_positions.values())}股")
+                print(f"总持仓: {self.total_position}股")
+                for price, qty in sorted(new_high_positions.items()):
+                    if qty > 0:
+                        print(f"  高位网格={price:.1f}, 数量={qty}")
 
-                # 显示网格状态
-                self._print_grid_status(show_all=True, show_time=False)
+            # 显示网格状态
+            self._print_grid_status(show_all=True, show_time=False)
 
-                # 标记初始化完成
-                self.initialization_complete = True
-
-                return True
+            # 标记初始化完成
+            self.initialization_complete = True
+            return True
 
         except Exception as e:
             print(f"初始化网格时发生错误: {str(e)}")
@@ -1859,72 +1853,71 @@ class Strategy(StrategyBase):
         :param batch_mode: bool, 表示是否来自批量更新场景。
         """
         try:
-            with self._position_lock:
-                grid_price = float(f"{grid_price:.2f}")
-                price = float(f"{price:.2f}")
-                
-                if self.verbose_log and not batch_mode:
-                    print(f"\n[更新持仓] 网格={grid_price}, 数量={qty}, 操作={'买入' if is_buy else '卖出'}, 价格={price}")
-                    print(f"更新前总持仓: {self.total_position}股")
-                    print(f"普通网格持仓: {sum(self.positions.values())}股")
-                    print(f"高位网格持仓: {sum(self.high_positions.values())}股")
+            grid_price = float(f"{grid_price:.2f}")
+            price = float(f"{price:.2f}")
+            
+            if self.verbose_log and not batch_mode:
+                print(f"\n[更新持仓] 网格={grid_price}, 数量={qty}, 操作={'买入' if is_buy else '卖出'}, 价格={price}")
+                print(f"更新前总持仓: {self.total_position}股")
+                print(f"普通网格持仓: {sum(self.positions.values())}股")
+                print(f"高位网格持仓: {sum(self.high_positions.values())}股")
 
-                if is_buy:
-                    # 买入合并逻辑
-                    current_pos = self.positions.get(grid_price, 0)
-                    current_cost = self.position_records.get(grid_price, {}).get('buy_price', 0.0)
-                    new_qty = current_pos + qty
+            if is_buy:
+                # 买入合并逻辑
+                current_pos = self.positions.get(grid_price, 0)
+                current_cost = self.position_records.get(grid_price, {}).get('buy_price', 0.0)
+                new_qty = current_pos + qty
 
-                    if current_pos > 0:
-                        new_cost = (current_pos * current_cost + qty * price) / new_qty
-                    else:
-                        new_cost = price
-
-                    self.positions[grid_price] = new_qty
-                    self.position_records[grid_price] = {
-                        'buy_price': new_cost,
-                        'quantity': new_qty,
-                        'update_time': time.time()
-                    }
+                if current_pos > 0:
+                    new_cost = (current_pos * current_cost + qty * price) / new_qty
                 else:
-                    # 卖出逻辑
-                    if grid_price in self.positions:
-                        current_pos = self.positions[grid_price]
-                        new_qty = current_pos - qty
-                        if new_qty <= 0:
-                            self.positions.pop(grid_price, None)
-                            self.position_records[grid_price] = {
-                                'buy_price': 0.0,
-                                'quantity': 0,
-                                'update_time': time.time()
-                            }
-                        else:
-                            self.positions[grid_price] = new_qty
-                            self.position_records[grid_price].update({
-                                'quantity': new_qty,
-                                'update_time': time.time()
-                            })
-                # 修改这一行，确保包含高位网格的持仓
-                old_total = self.total_position
-                self.total_position = sum(self.positions.values()) + sum(self.high_positions.values())
-                # 新增一致性断言与详细日志
-                sum_positions = sum(self.positions.values())
-                sum_high_positions = sum(self.high_positions.values())
-                sum_manual_positions = sum(self.manual_positions.values()) if hasattr(self,'manual_positions') else 0
-                assert self.total_position == sum_positions + sum_high_positions, f"持仓统计不一致: total={self.total_position}, 普通={sum_positions}, 高位={sum_high_positions}"
-                if self.verbose_log:
-                    print(f"[调试] 买入/卖出后各持仓明细: 普通网格={self.positions}, 高位网格={self.high_positions}, 隔离={getattr(self,'manual_positions',{})}, 总持仓={self.total_position}")
-                if self.verbose_log and not batch_mode:
-                    print(f"更新后总持仓: {self.total_position}股")
-                    print(f"普通网格持仓: {sum_positions}股")
-                    print(f"高位网格持仓: {sum_high_positions}股")
-                    print(f"隔离持仓: {sum_manual_positions}股")
-                    print(f"持仓变化: {self.total_position - old_total}股")
-                if not batch_mode:
-                    print(f"持仓更新 - 网格:{grid_price:.2f}, 操作:{'买入' if is_buy else '卖出'}, "
-                        f"数量:{qty}, 价格:{price:.2f}, 总持仓:{self.total_position}")
-                    self._print_grid_status(show_all=False, show_time=True)
-                return True
+                    new_cost = price
+
+                self.positions[grid_price] = new_qty
+                self.position_records[grid_price] = {
+                    'buy_price': new_cost,
+                    'quantity': new_qty,
+                    'update_time': time.time()
+                }
+            else:
+                # 卖出逻辑
+                if grid_price in self.positions:
+                    current_pos = self.positions[grid_price]
+                    new_qty = current_pos - qty
+                    if new_qty <= 0:
+                        self.positions.pop(grid_price, None)
+                        self.position_records[grid_price] = {
+                            'buy_price': 0.0,
+                            'quantity': 0,
+                            'update_time': time.time()
+                        }
+                    else:
+                        self.positions[grid_price] = new_qty
+                        self.position_records[grid_price].update({
+                            'quantity': new_qty,
+                            'update_time': time.time()
+                        })
+            # 修改这一行，确保包含高位网格的持仓
+            old_total = self.total_position
+            self.total_position = sum(self.positions.values()) + sum(self.high_positions.values())
+            # 新增一致性断言与详细日志
+            sum_positions = sum(self.positions.values())
+            sum_high_positions = sum(self.high_positions.values())
+            sum_manual_positions = sum(self.manual_positions.values()) if hasattr(self,'manual_positions') else 0
+            assert self.total_position == sum_positions + sum_high_positions, f"持仓统计不一致: total={self.total_position}, 普通={sum_positions}, 高位={sum_high_positions}"
+            if self.verbose_log:
+                print(f"[调试] 买入/卖出后各持仓明细: 普通网格={self.positions}, 高位网格={self.high_positions}, 隔离={getattr(self,'manual_positions',{})}, 总持仓={self.total_position}")
+            if self.verbose_log and not batch_mode:
+                print(f"更新后总持仓: {self.total_position}股")
+                print(f"普通网格持仓: {sum_positions}股")
+                print(f"高位网格持仓: {sum_high_positions}股")
+                print(f"隔离持仓: {sum_manual_positions}股")
+                print(f"持仓变化: {self.total_position - old_total}股")
+            if not batch_mode:
+                print(f"持仓更新 - 网格:{grid_price:.2f}, 操作:{'买入' if is_buy else '卖出'}, "
+                    f"数量:{qty}, 价格:{price:.2f}, 总持仓:{self.total_position}")
+                self._print_grid_status(show_all=False, show_time=True)
+            return True
 
         except Exception as e:
             print(f"_update_position失败: {str(e)}")
@@ -1935,9 +1928,8 @@ class Strategy(StrategyBase):
         批量更新多个网格的持仓。
         :param updates: List of (grid_price, qty, is_buy, price)
         """
-        with self._position_lock:
-            try:
-                # 1. 备份旧状态，用于出错时回滚
+        try:
+            # 1. 备份旧状态，用于出错时回滚
                 old_positions = self.positions.copy()
                 old_records = {k: v.copy() for k, v in self.position_records.items()}
                 old_total = self.total_position
@@ -1997,13 +1989,42 @@ class Strategy(StrategyBase):
 
                 return True
 
-            except Exception as e:
-                print(f"批量更新持仓失败: {str(e)}")
-                # 回滚
-                self.positions = old_positions
-                self.position_records = old_records
-                self.total_position = old_total
-                return False
+        except Exception as e:
+            print(f"批量更新持仓失败: {str(e)}")
+            # 回滚
+            self.positions = old_positions
+            self.position_records = old_records
+            self.total_position = old_total
+            return False
+
+    def _execute_high_grid_sell(self, profitable_grids, current_price):
+        """
+        执行高位网格卖出。
+        """
+        print("[_execute_high_grid_sell] -> 调用通用卖出 _execute_sell_order(..., from_high=True)")
+        return self._execute_sell_order(profitable_grids, current_price, from_high=True)
+
+    def _clean_empty_high_grids(self):
+        """
+        清理空仓的高位网格记录。
+        """
+        try:
+            empty_grids = [grid for grid, qty in self.high_positions.items() 
+                           if qty <= 0 or grid in self.positions]
+            for grid in empty_grids:
+                if grid in self.high_positions:
+                    print(f"清理高位网格: {grid}")
+                    self.high_positions.pop(grid)
+                    self.high_records.pop(grid)
+        except Exception as e:
+            print(f"清理高位网格时发生错误: {str(e)}")
+
+    def _execute_batch_sell(self, profitable_grids, current_price):
+        """
+        执行批量卖出。
+        """
+        print("[_execute_batch_sell] -> 调用通用卖出 _execute_sell_order(..., from_high=False)")
+        return self._execute_sell_order(profitable_grids, current_price, from_high=False)
 
     def _execute_sell_order(self, profitable_grids, current_price, from_high=False):
         """
@@ -2154,8 +2175,8 @@ class Strategy(StrategyBase):
                 # 卖出成功后，立即检查当前价格所在网格是否可以买入
                 try:
                     # 首先检查是否启用了日内模式
-                    if not self.allow_intraday_trading:
-                        print("[非日内模式] 已启用非日内模式，卖出后不立即买入，等待下一个周期")
+                    if self.enable_non_intraday_mode:
+                        print(f"日内模式: {'开启' if not self.enable_non_intraday_mode else '关闭'}")
                         return True
                         
                     # 获取最新价格 - 避免与参数名current_price冲突
