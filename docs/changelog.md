@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Documentation Update] - 2025-08-24
+### Updated
+- **主README文件：** 更新策略总览表格，补充各策略最新特性和版本信息
+- **项目概述文档：** 增强主要功能特性描述，添加订单稳定性和价格偏差容忍度等新特性
+- **策略V3.1文档：** 补充回测优化参数说明和版本更新记录
+- **最新更新记录：** 重新整理各策略版本更新要点，突出关键改进
+
 ## [strategy_v3 v5.3.13] - 2025-07-06
 ### Added
 - **价格偏差容忍度：** 新增 `price_deviation_tolerance_multiplier` 全局变量，允许用户调整市价与网格价格的最大偏离容忍度，以更精细地控制成交价格。
