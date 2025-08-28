@@ -311,20 +311,18 @@ class Strategy(StrategyBase):
             quantity = 20
 
         if self.backtest:
-            # 回测模式
+            # 回测模式 - 纯模拟，不调用实际下单API
             required_cash = quantity * latest_price
             if required_cash > self.virtual_balance:
                 print(f"💰 虚拟余额不足: 需要${required_cash:.2f}, 可用${self.virtual_balance:.2f}")
                 return
 
-            # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
-            market_price = latest_price * 1.01
-            order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
+            # 模拟订单成功，直接更新虚拟账户
             self.virtual_balance -= required_cash
             self._total_cost += required_cash
             self._position += quantity
             
-            print(f"✅ {trade_type}成功: {quantity}股 @ ${latest_price:.2f}, 余额=${self.virtual_balance:.2f}")
+            print(f"✅ [回测] {trade_type}成功: {quantity}股 @ ${latest_price:.2f}, 余额=${self.virtual_balance:.2f}")
             
         else:
             # 实盘模式
@@ -338,10 +336,14 @@ class Strategy(StrategyBase):
                 quantity = max_qty
                 print(f"⚠️ 资金调整: 投资数量调整为 {quantity}股")
 
-            # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
-            market_price = latest_price * 1.01
-            order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
-            print(f"✅ {trade_type}订单: {quantity}股 @ 市价, 订单号: {order_id}")
+            try:
+                # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
+                market_price = latest_price * 1.01
+                order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
+                print(f"✅ {trade_type}订单: {quantity}股 @ ${market_price:.2f}, 订单号: {order_id}")
+            except Exception as e:
+                print(f"❌ 下单失败: {str(e)}")
+                return
 
         self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
 
