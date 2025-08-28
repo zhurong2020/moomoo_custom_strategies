@@ -67,3 +67,24 @@ dmypy.json
 
 # Python package management (PEP 582)
 __pypackages__/
+
+# Business-sensitive and private planning documents
+docs/community_commercialization_plan.md
+docs/vip_tier_specifications.md
+docs/revenue_projections.md
+docs/user_growth_analysis.md
+docs/pricing_strategy.md
+docs/business_*.md
+
+# Internal planning and sensitive strategy documents
+**/revenue_*
+**/business_model_*
+**/monetization_*
+**/user_conversion_*
+**/pricing_analysis_*
+
+# Private configuration and API keys
+config/private_*
+*.key
+*.secret
+api_keys.txt

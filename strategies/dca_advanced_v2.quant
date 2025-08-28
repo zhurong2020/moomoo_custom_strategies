@@ -1,0 +1,444 @@
+class Strategy(StrategyBase):
+    """第二层：付费进阶定投策略
+    
+    为付费用户提供的增强版定投策略
+    - 完整8层回撤加仓系统
+    - 基础成本定投算法
+    - 波动率感知调整
+    - 高级统计分析
+    - 详细日志和监控
+    """
+
+    def initialize(self):
+        """初始化策略"""
+        try:
+            self._version = "v2.0.0-Advanced"
+            self._tier = "付费进阶版"
+            self._description = (
+                "💎 付费进阶定投策略 - 专业级定投解决方案\n"
+                "✅ 完整8层回撤加仓 (1x-4.5x倍数)\n"
+                "✅ 基础成本定投算法\n"  
+                "✅ 波动率感知智能调整\n"
+                "✅ 高级风控和统计分析\n"
+                "✅ 详细监控和日志系统\n"
+                "🔥 VIP版支持11层成本定投+多标的组合"
+            )
+            
+            self.trigger_symbols()
+            self.global_variables()
+            self.setup_advanced_features()
+            self.print_welcome()
+            
+            # 高级状态变量
+            self.current_drawdown_layer = 0
+            self.last_investment_time = None
+            self.highest_price = None
+            self.cost_base_price = None  # 成本定投基准价
+            self.volatility_history = []
+            
+            # 统计变量
+            self.total_investments = 0
+            self.total_add_positions = 0
+            self.layer_triggers = [0] * 8  # 记录各层触发次数
+            
+            # 回测支持
+            import collections
+            self.high_queue = collections.deque(maxlen=50)  # 增加历史数据
+            self.price_queue = collections.deque(maxlen=20)  # 价格队列用于波动率计算
+            self.virtual_balance = 1e6 if self.backtest else None
+            self._position = 0
+            self._total_cost = 0.0
+            
+        except Exception as e:
+            print(f"❌ 初始化失败: {str(e)}")
+
+    def trigger_symbols(self):
+        """设置交易标的"""
+        try:
+            self.stock = declare_trig_symbol()
+            print(f"📈 交易标的: {self.stock}")
+        except Exception as e:
+            print(f"❌ 标的设置失败: {str(e)}")
+
+    def global_variables(self):
+        """高级参数配置"""
+        try:
+            # 基础定投参数
+            self.qty = show_variable(20, GlobalType.INT)  # 基础投资数量
+            self.interval_min = show_variable(1440, GlobalType.INT)  # 定投周期
+            
+            # 高级定投模式选择
+            self.dca_mode = show_variable(1, GlobalType.INT)  # 1=历史最高价回撤 2=成本定投
+            self.volatility_adjust = show_variable(True, GlobalType.BOOL)  # 波动率调整
+            
+            # 回撤加仓参数 (8层完整版)
+            self.base_drawdown_pct = show_variable(5.0, GlobalType.FLOAT)  # 基础回撤阈值
+            self.layer_interval = show_variable(5.0, GlobalType.FLOAT)  # 层级间隔
+            
+            # 高级风控参数
+            self.extreme_drawdown_pct = show_variable(60.0, GlobalType.FLOAT)  # 极端回撤保护
+            self.max_position_limit = show_variable(10000, GlobalType.INT)  # 最大持仓限制
+            self.daily_invest_limit = show_variable(5, GlobalType.INT)  # 每日最大投资次数
+            
+            # 功能开关
+            self.backtest = show_variable(True, GlobalType.BOOL)
+            self.detailed_log = show_variable(True, GlobalType.BOOL)  # 详细日志
+            self.risk_alert = show_variable(True, GlobalType.BOOL)  # 风险预警
+            
+            # 固定高级配置
+            self.drawdown_layers = [5, 10, 15, 20, 30, 40, 50, 60]  # 8层回撤阈值
+            self.drawdown_multipliers = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5]  # 对应倍数
+            self.daily_invest_count = 0
+            self.last_reset_day = None
+            
+            print(f"⚙️ 高级参数配置完成")
+            
+        except Exception as e:
+            print(f"❌ 参数设置失败: {str(e)}")
+
+    def setup_advanced_features(self):
+        """设置高级功能"""
+        # 成本定投模式说明
+        self.dca_modes = {
+            1: {
+                "name": "历史最高价回撤模式",
+                "description": "基于历史最高价计算回撤，经典模式"
+            },
+            2: {
+                "name": "持仓成本定投模式", 
+                "description": "基于持仓成本计算相对涨跌，降低高位风险"
+            }
+        }
+        
+        self.current_mode = self.dca_modes.get(self.dca_mode, self.dca_modes[1])
+
+    def print_welcome(self):
+        """打印欢迎信息"""
+        print("\n" + "="*70)
+        print(f"🚀 {self._tier} {self._version}")
+        print("="*70)
+        print(self._description)
+        print(f"\n📊 高级配置:")
+        print(f"   定投模式: {self.current_mode['name']}")
+        print(f"   基础数量: {self.qty}股")
+        print(f"   定投周期: {self.interval_min}分钟")
+        print(f"   回撤系统: {len(self.drawdown_layers)}层 {self.drawdown_layers}%")
+        print(f"   倍数设置: {self.drawdown_multipliers}")
+        print(f"   波动率调整: {'开启' if self.volatility_adjust else '关闭'}")
+        print(f"   风险预警: {'开启' if self.risk_alert else '关闭'}")
+        print(f"   详细日志: {'开启' if self.detailed_log else '关闭'}")
+        print(f"   运行模式: {'回测' if self.backtest else '实盘'}")
+        print("\n🔥 VIP版本功能预告:")
+        print("   - 11层精细化成本定投算法")
+        print("   - 多标的组合定投")
+        print("   - AI智能参数优化")
+        print("   - VPS自动化部署")
+        print("="*70 + "\n")
+
+    def handle_data(self):
+        """主要交易逻辑"""
+        try:
+            current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+            latest_price, highest_price, account_balance = self.get_market_data()
+            
+            # 重置每日计数器
+            self.reset_daily_counters(current_time)
+            
+            # 更新价格历史用于波动率计算
+            self.price_queue.append(latest_price)
+            
+            # 计算回撤和成本相关数据
+            drawdown = self.calculate_drawdown(latest_price)
+            cost_deviation = self.calculate_cost_deviation(latest_price)
+            volatility = self.calculate_volatility()
+            
+            # 获取持仓信息
+            position = self.get_position()
+            total_cost = self.get_total_cost()
+            average_cost = self.get_avg_cost()
+            market_value = position * latest_price
+            profit = market_value - total_cost
+            profit_pct = (profit / total_cost * 100) if total_cost > 0 else 0
+            
+            # 详细日志
+            if self.detailed_log:
+                print(f"📊 详细数据: 价格={latest_price:.2f}, 历史最高={highest_price:.2f}")
+                print(f"   回撤={drawdown:.2f}%, 成本偏离={cost_deviation:.2f}%, 波动率={volatility:.4f}")
+                print(f"   持仓={position}, 成本=${average_cost:.2f}, 市值=${market_value:.2f}, 盈亏={profit_pct:.2f}%")
+
+            # 检查投资次数限制
+            if self.daily_invest_count >= self.daily_invest_limit:
+                if self.detailed_log:
+                    print(f"⏸️ 今日投资次数已达上限 ({self.daily_invest_limit}次)")
+                return
+
+            # 风险预警检查
+            if self.risk_alert:
+                self.check_risk_alerts(drawdown, profit_pct, position)
+
+            # 极端回撤保护
+            if drawdown >= self.extreme_drawdown_pct:
+                print(f"🛡️ 极端回撤保护: {drawdown:.2f}% >= {self.extreme_drawdown_pct}%")
+                if self.should_invest(current_time):
+                    self.execute_investment(latest_price, account_balance, self.qty, "极端回撤保护-仅定投", volatility)
+                return
+
+            # 选择定投模式
+            if self.dca_mode == 2:
+                # 成本定投模式
+                add_qty = self.calculate_cost_based_qty(cost_deviation, volatility)
+            else:
+                # 历史最高价回撤模式
+                add_qty = self.calculate_drawdown_based_qty(drawdown, volatility)
+
+            # 执行加仓逻辑
+            if add_qty > 0:
+                self.execute_investment(latest_price, account_balance, add_qty, "智能加仓", volatility)
+                return
+
+            # 常规定投
+            if self.should_invest(current_time):
+                final_qty = self.apply_volatility_adjustment(self.qty, volatility) if self.volatility_adjust else self.qty
+                self.execute_investment(latest_price, account_balance, final_qty, "定期定投", volatility)
+
+        except Exception as e:
+            print(f"❌ 策略执行错误: {str(e)}")
+
+    def get_market_data(self):
+        """获取市场数据 - 增强版"""
+        if self.backtest:
+            # 回测模式 - 更多历史数据
+            if not hasattr(self, 'bar_index'):
+                self.bar_index = 1
+            else:
+                self.bar_index += 1
+                
+            latest_price = bar_close(self.stock, bar_type=BarType.D1, select=1)
+            self.high_queue.append(latest_price)
+            
+            available_days = min(self.bar_index, 50)
+            high_list = list(self.high_queue)[-available_days:]
+            highest_price = max(high_list) if high_list else latest_price
+            
+            account_balance = self.virtual_balance
+            return latest_price, highest_price, account_balance
+        else:
+            # 实盘模式 - 获取更长历史
+            latest_price = current_price(self.stock, price_type=THType.FTH)
+            high_list = [bar_high(self.stock, bar_type=BarType.D1, select=i) for i in range(1, 51)]
+            highest_price = max([h for h in high_list if h is not None]) if high_list else latest_price
+            account_balance = total_cash(currency=Currency.USD)
+            return latest_price, highest_price, account_balance
+
+    def calculate_drawdown(self, latest_price):
+        """计算回撤幅度"""
+        if self.highest_price is None:
+            self.highest_price = latest_price
+        self.highest_price = max(self.highest_price, latest_price)
+        return (self.highest_price - latest_price) / self.highest_price * 100
+
+    def calculate_cost_deviation(self, latest_price):
+        """计算相对持仓成本的偏离度 - 成本定投核心"""
+        avg_cost = self.get_avg_cost()
+        if avg_cost <= 0:
+            return 0
+        return (latest_price - avg_cost) / avg_cost * 100
+
+    def calculate_volatility(self):
+        """计算波动率"""
+        if len(self.price_queue) < 5:
+            return 0.02  # 默认波动率
+            
+        prices = list(self.price_queue)
+        returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
+        
+        if not returns:
+            return 0.02
+            
+        # 计算标准差作为波动率
+        mean_return = sum(returns) / len(returns)
+        variance = sum([(r - mean_return) ** 2 for r in returns]) / len(returns)
+        volatility = variance ** 0.5
+        
+        # 记录波动率历史
+        self.volatility_history.append(volatility)
+        if len(self.volatility_history) > 20:
+            self.volatility_history.pop(0)
+            
+        return volatility
+
+    def calculate_drawdown_based_qty(self, drawdown, volatility):
+        """基于历史最高价回撤的加仓计算 - 8层完整版"""
+        for i, threshold in enumerate(self.drawdown_layers):
+            if drawdown >= threshold:
+                # 检查是否已经在这个层级加过仓
+                if i <= self.current_drawdown_layer:
+                    continue
+                    
+                # 触发新的加仓层级
+                self.current_drawdown_layer = i
+                base_multiplier = self.drawdown_multipliers[i]
+                
+                # 波动率调整
+                vol_multiplier = 1.0
+                if self.volatility_adjust and volatility > 0.03:  # 高波动时减少投资
+                    vol_multiplier = max(0.5, 1.0 - (volatility - 0.03) * 10)
+                
+                final_qty = int(self.qty * base_multiplier * vol_multiplier)
+                
+                # 记录层级触发
+                self.layer_triggers[i] += 1
+                
+                if self.detailed_log:
+                    print(f"🎯 回撤加仓: 第{i+1}层({threshold}%), 基础倍数={base_multiplier}, 波动率调整={vol_multiplier:.2f}, 最终={final_qty}股")
+                
+                return final_qty
+        
+        return 0
+
+    def calculate_cost_based_qty(self, cost_deviation, volatility):
+        """基于成本的定投计算 - 基础版成本定投算法"""
+        if cost_deviation >= 20:  # 高于成本20%以上，减少投资
+            return 0
+        elif cost_deviation >= 10:  # 高于成本10-20%，减少投资
+            multiplier = 0.5
+        elif cost_deviation >= 0:  # 略高于成本，正常投资
+            multiplier = 1.0
+        elif cost_deviation >= -10:  # 略低于成本，适度加仓
+            multiplier = 1.5
+        elif cost_deviation >= -20:  # 明显低于成本，加大投资
+            multiplier = 2.0
+        else:  # 远低于成本，大幅加仓
+            multiplier = 3.0
+        
+        # 波动率调整
+        if self.volatility_adjust and volatility > 0.03:
+            vol_multiplier = max(0.5, 1.0 - (volatility - 0.03) * 10)
+            multiplier *= vol_multiplier
+        
+        final_qty = int(self.qty * multiplier)
+        
+        if final_qty > self.qty:  # 只有加仓时才记录
+            if self.detailed_log:
+                print(f"💰 成本定投: 偏离={cost_deviation:.2f}%, 倍数={multiplier:.2f}, 数量={final_qty}股")
+            return final_qty
+            
+        return 0
+
+    def apply_volatility_adjustment(self, base_qty, volatility):
+        """应用波动率调整"""
+        if volatility > 0.05:  # 超高波动
+            return int(base_qty * 0.5)
+        elif volatility > 0.03:  # 高波动
+            return int(base_qty * 0.8)
+        elif volatility < 0.01:  # 低波动
+            return int(base_qty * 1.2)
+        else:
+            return base_qty
+
+    def check_risk_alerts(self, drawdown, profit_pct, position):
+        """风险预警检查"""
+        alerts = []
+        
+        if drawdown > 40:
+            alerts.append(f"高回撤风险: {drawdown:.2f}%")
+        if profit_pct < -30:
+            alerts.append(f"高亏损风险: {profit_pct:.2f}%")
+        if position > self.max_position_limit:
+            alerts.append(f"持仓过大: {position}股 > {self.max_position_limit}股")
+        
+        if alerts:
+            print(f"⚠️ 风险预警: {', '.join(alerts)}")
+
+    def reset_daily_counters(self, current_time):
+        """重置每日计数器"""
+        current_day = current_time.date()
+        if self.last_reset_day != current_day:
+            self.daily_invest_count = 0
+            self.last_reset_day = current_day
+
+    def should_invest(self, current_time):
+        """判断是否应该定投"""
+        if self.last_investment_time is None:
+            return True
+        elapsed = (current_time - self.last_investment_time).total_seconds() / 60
+        return elapsed >= self.interval_min
+
+    def execute_investment(self, latest_price, account_balance, quantity, trade_type="定投", volatility=0.02):
+        """执行投资 - 增强版"""
+        # 参数合法性检查
+        if quantity < 10 or quantity > 2000:
+            print(f"⚠️ 数量调整: {quantity} -> {max(10, min(quantity, 200))}股")
+            quantity = max(10, min(quantity, 200))
+
+        if self.backtest:
+            # 回测模式
+            required_cash = quantity * latest_price
+            if required_cash > self.virtual_balance:
+                print(f"💰 虚拟余额不足: 需要${required_cash:.2f}, 可用${self.virtual_balance:.2f}")
+                return
+
+            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            self.virtual_balance -= required_cash
+            self._total_cost += required_cash
+            self._position += quantity
+            
+            # 更新统计
+            if trade_type == "定期定投":
+                self.total_investments += 1
+            else:
+                self.total_add_positions += 1
+            
+            if self.detailed_log:
+                print(f"✅ {trade_type}: {quantity}股 @ ${latest_price:.2f}")
+                print(f"   波动率={volatility:.4f}, 余额=${self.virtual_balance:.2f}")
+                print(f"   累计定投={self.total_investments}次, 累计加仓={self.total_add_positions}次")
+            else:
+                print(f"✅ {trade_type}: {quantity}股 @ ${latest_price:.2f}")
+            
+        else:
+            # 实盘模式
+            required_cash = quantity * latest_price
+            if required_cash > account_balance:
+                max_qty = int((account_balance // latest_price) // 10 * 10)
+                if max_qty < 10:
+                    print(f"💰 资金不足，跳过本次投资")
+                    return
+                quantity = max_qty
+                print(f"⚠️ 资金调整: 投资数量调整为 {quantity}股")
+
+            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            print(f"✅ {trade_type}订单: {quantity}股 @ 市价, 订单号: {order_id}")
+
+        # 更新状态
+        self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+        self.daily_invest_count += 1
+
+    def get_position(self):
+        """获取持仓数量"""
+        if self.backtest:
+            return self._position
+        try:
+            return position_holding_qty(self.stock)
+        except:
+            return 0
+
+    def get_total_cost(self):
+        """获取总成本"""
+        if self.backtest:
+            return self._total_cost
+        try:
+            pos = position_holding_qty(self.stock)
+            avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+            return pos * avg_cost
+        except:
+            return 0.0
+
+    def get_avg_cost(self):
+        """获取平均成本"""
+        if self.backtest:
+            return self._total_cost / self._position if self._position > 0 else 0.0
+        try:
+            return position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+        except:
+            return 0.0
