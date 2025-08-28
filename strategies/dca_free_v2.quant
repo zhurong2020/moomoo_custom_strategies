@@ -11,7 +11,7 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.0.0-Free"
+            self._version = "v2.0.2-Free"
             self._tier = "免费基础版"
             self._description = (
                 "🆓 免费基础定投策略 - 解决Moomoo定投痛点\n"
@@ -319,25 +319,32 @@ class Strategy(StrategyBase):
             # 回测模式 - 使用place_market产生GUI交易打点
             required_cash = quantity * latest_price
             if required_cash > self.virtual_balance:
-                print(f"💰 虚拟余额不足: 需要${required_cash:.2f}, 可用${self.virtual_balance:.2f}")
+                # 资金不足，自动调整投资数量
+                original_qty = quantity
+                max_qty = int(self.virtual_balance // latest_price)
+                if max_qty < 1:
+                    print(f"💰 虚拟余额不足，无法购买任何股票: 需要${required_cash:.2f}, 可用${self.virtual_balance:.2f}")
+                    return
+                quantity = max_qty
+                required_cash = quantity * latest_price
+                print(f"⚠️ 资金调整: 原计划买{original_qty}股，调整为{quantity}股 (可用资金${self.virtual_balance:.2f})")
+            
+            if quantity < 1:
+                print(f"💰 调整后数量不足1股，跳过本次投资")
                 return
 
             # 调用place_market模拟下单，产生GUI交易打点
             order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
             
-            # 输出标准订单流程日志（与V1策略保持一致）
-            print(f"【订单状态】等待提交。标的：{self.stock}；交易方向：买；订单类型：市价单；订单数量：{quantity}股；期限：当日有效。")
-            print(f"【订单状态】已提交，等待成交。标的：{self.stock}；交易方向：买；订单类型：市价单；订单数量：{quantity}股；期限：当日有效。")
-            print(f"【成交状态】正常。标的：{self.stock}；交易方向：买；成交数量：{quantity}股；成交价格：{latest_price}。")
-            print(f"【订单状态】全部成交。标的：{self.stock}；交易方向：买；订单类型：市价单；订单数量：{quantity}股；期限：当日有效。")
-            print(f"订单委托成功。标的：{self.stock}；交易方向：买；数量：{quantity}股；订单类型：市价单；期限：当日有效。")
+            # 精简日志输出，仅保留关键信息
+            print(f"📊 {trade_type}: {quantity}股 @ ${latest_price:.2f} | 订单:{order_id}")
             
             # 更新虚拟账户
             self.virtual_balance -= required_cash
             self._total_cost += required_cash
             self._position += quantity
             
-            print(f"✅ [回测] {trade_type}成功: {quantity}股 @ ${latest_price:.2f}, 余额=${self.virtual_balance:.2f}")
+            print(f"💰 余额: ${self.virtual_balance:.2f} | 持仓: {self._position}股")
             
         else:
             # 实盘模式
