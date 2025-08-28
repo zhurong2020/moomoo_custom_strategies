@@ -25,6 +25,7 @@ class Strategy(StrategyBase):
             )
             
             self.trigger_symbols()
+            self.custom_indicator()
             self.global_variables()
             self.setup_advanced_features()
             self.print_welcome()
@@ -59,6 +60,19 @@ class Strategy(StrategyBase):
             print(f"📈 交易标的: {self.stock}")
         except Exception as e:
             print(f"❌ 标的设置失败: {str(e)}")
+
+    def custom_indicator(self):
+        """注册自定义技术指标"""
+        try:
+            # 注册移动平均线指标用于高级分析
+            self.register_indicator(
+                indicator_name='MA',
+                script='MA5:MA(CLOSE,5),COLORFF8D1E;MA20:MA(CLOSE,20),COLOR00FF00;',
+                param_list=[]
+            )
+            print("📊 高级技术指标注册完成")
+        except Exception as e:
+            print(f"❌ 技术指标注册失败: {str(e)}")
 
     def global_variables(self):
         """高级参数配置"""
@@ -216,9 +230,15 @@ class Strategy(StrategyBase):
             latest_price = bar_close(self.stock, bar_type=BarType.D1, select=1)
             self.high_queue.append(latest_price)
             
-            available_days = min(self.bar_index, 50)
+            available_days = self.bar_index if self.bar_index < 50 else 50
             high_list = list(self.high_queue)[-available_days:]
-            highest_price = max(high_list) if high_list else latest_price
+            if len(high_list) == 0:
+                highest_price = latest_price
+            else:
+                highest_price = high_list[0]
+                for price in high_list[1:]:
+                    if price > highest_price:
+                        highest_price = price
             
             account_balance = self.virtual_balance
             return latest_price, highest_price, account_balance
@@ -226,7 +246,14 @@ class Strategy(StrategyBase):
             # 实盘模式 - 获取更长历史
             latest_price = current_price(self.stock, price_type=THType.FTH)
             high_list = [bar_high(self.stock, bar_type=BarType.D1, select=i) for i in range(1, 51)]
-            highest_price = max([h for h in high_list if h is not None]) if high_list else latest_price
+            valid_highs = [h for h in high_list if h is not None]
+            if len(valid_highs) == 0:
+                highest_price = latest_price
+            else:
+                highest_price = valid_highs[0]
+                for price in valid_highs[1:]:
+                    if price > highest_price:
+                        highest_price = price
             account_balance = total_cash(currency=Currency.USD)
             return latest_price, highest_price, account_balance
 
@@ -234,7 +261,8 @@ class Strategy(StrategyBase):
         """计算回撤幅度"""
         if self.highest_price is None:
             self.highest_price = latest_price
-        self.highest_price = max(self.highest_price, latest_price)
+        if latest_price > self.highest_price:
+            self.highest_price = latest_price
         return (self.highest_price - latest_price) / self.highest_price * 100
 
     def calculate_cost_deviation(self, latest_price):
@@ -282,7 +310,8 @@ class Strategy(StrategyBase):
                 # 波动率调整
                 vol_multiplier = 1.0
                 if self.volatility_adjust and volatility > 0.03:  # 高波动时减少投资
-                    vol_multiplier = max(0.5, 1.0 - (volatility - 0.03) * 10)
+                    temp_multiplier = 1.0 - (volatility - 0.03) * 10
+                    vol_multiplier = temp_multiplier if temp_multiplier > 0.5 else 0.5
                 
                 final_qty = int(self.qty * base_multiplier * vol_multiplier)
                 
@@ -313,7 +342,8 @@ class Strategy(StrategyBase):
         
         # 波动率调整
         if self.volatility_adjust and volatility > 0.03:
-            vol_multiplier = max(0.5, 1.0 - (volatility - 0.03) * 10)
+            temp_multiplier = 1.0 - (volatility - 0.03) * 10
+            vol_multiplier = temp_multiplier if temp_multiplier > 0.5 else 0.5
             multiplier *= vol_multiplier
         
         final_qty = int(self.qty * multiplier)
@@ -368,8 +398,15 @@ class Strategy(StrategyBase):
         """执行投资 - 增强版"""
         # 参数合法性检查
         if quantity < 10 or quantity > 2000:
-            print(f"⚠️ 数量调整: {quantity} -> {max(10, min(quantity, 200))}股")
-            quantity = max(10, min(quantity, 200))
+            # 修复数量调整逻辑
+            if quantity < 10:
+                adjusted_qty = 10
+            elif quantity > 200:
+                adjusted_qty = 200
+            else:
+                adjusted_qty = quantity
+            print(f"⚠️ 数量调整: {quantity} -> {adjusted_qty}股")
+            quantity = adjusted_qty
 
         if self.backtest:
             # 回测模式
@@ -378,7 +415,9 @@ class Strategy(StrategyBase):
                 print(f"💰 虚拟余额不足: 需要${required_cash:.2f}, 可用${self.virtual_balance:.2f}")
                 return
 
-            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
+            market_price = latest_price * 1.01
+            order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
             self.virtual_balance -= required_cash
             self._total_cost += required_cash
             self._position += quantity
@@ -407,7 +446,9 @@ class Strategy(StrategyBase):
                 quantity = max_qty
                 print(f"⚠️ 资金调整: 投资数量调整为 {quantity}股")
 
-            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
+            market_price = latest_price * 1.01
+            order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
             print(f"✅ {trade_type}订单: {quantity}股 @ 市价, 订单号: {order_id}")
 
         # 更新状态

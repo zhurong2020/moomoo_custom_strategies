@@ -23,6 +23,7 @@ class Strategy(StrategyBase):
             )
             
             self.trigger_symbols()
+            self.custom_indicator()
             self.global_variables()
             self.setup_presets()
             self.print_welcome()
@@ -49,6 +50,19 @@ class Strategy(StrategyBase):
             print(f"📈 交易标的: {self.stock}")
         except Exception as e:
             print(f"❌ 标的设置失败: {str(e)}")
+
+    def custom_indicator(self):
+        """注册自定义技术指标"""
+        try:
+            # 注册一个简单的移动平均线指标供参考
+            self.register_indicator(
+                indicator_name='MA',
+                script='MA5:MA(CLOSE,5),COLORFF8D1E;',
+                param_list=[]
+            )
+            print("📊 技术指标注册完成")
+        except Exception as e:
+            print(f"❌ 技术指标注册失败: {str(e)}")
 
     def global_variables(self):
         """全局变量设置 - 简化版"""
@@ -200,9 +214,19 @@ class Strategy(StrategyBase):
             latest_price = bar_close(self.stock, bar_type=BarType.D1, select=1)
             self.high_queue.append(latest_price)
             
-            available_days = min(self.bar_index, 20)
+            # 使用条件判断替代min()函数
+            available_days = self.bar_index if self.bar_index < 20 else 20
             high_list = list(self.high_queue)[-available_days:]
-            highest_price = max(high_list) if high_list else latest_price
+            if len(high_list) == 0:
+                highest_price = latest_price
+            elif len(high_list) == 1:
+                highest_price = high_list[0]
+            else:
+                # 使用Moomoo支持的max()函数格式，传入具体数值
+                highest_price = high_list[0]
+                for price in high_list[1:]:
+                    if price > highest_price:
+                        highest_price = price
             
             account_balance = self.virtual_balance
             return latest_price, highest_price, account_balance
@@ -210,7 +234,17 @@ class Strategy(StrategyBase):
             # 实盘模式
             latest_price = current_price(self.stock, price_type=THType.FTH)
             high_list = [bar_high(self.stock, bar_type=BarType.D1, select=i) for i in range(1, 21)]
-            highest_price = max(high_list) if high_list else latest_price
+            # 处理可能的None值并找出最大值
+            valid_highs = [h for h in high_list if h is not None]
+            if len(valid_highs) == 0:
+                highest_price = latest_price
+            elif len(valid_highs) == 1:
+                highest_price = valid_highs[0]
+            else:
+                highest_price = valid_highs[0]
+                for price in valid_highs[1:]:
+                    if price > highest_price:
+                        highest_price = price
             account_balance = total_cash(currency=Currency.USD)
             return latest_price, highest_price, account_balance
 
@@ -218,7 +252,9 @@ class Strategy(StrategyBase):
         """计算回撤幅度"""
         if self.highest_price is None:
             self.highest_price = latest_price
-        self.highest_price = max(self.highest_price, latest_price)
+        # 使用条件判断替代max()函数
+        if latest_price > self.highest_price:
+            self.highest_price = latest_price
         return (self.highest_price - latest_price) / self.highest_price * 100
 
     def calculate_add_position_qty(self, drawdown):
@@ -259,7 +295,9 @@ class Strategy(StrategyBase):
                 print(f"💰 虚拟余额不足: 需要${required_cash:.2f}, 可用${self.virtual_balance:.2f}")
                 return
 
-            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
+            market_price = latest_price * 1.01
+            order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
             self.virtual_balance -= required_cash
             self._total_cost += required_cash
             self._position += quantity
@@ -278,7 +316,9 @@ class Strategy(StrategyBase):
                 quantity = max_qty
                 print(f"⚠️ 资金调整: 投资数量调整为 {quantity}股")
 
-            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
+            market_price = latest_price * 1.01
+            order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
             print(f"✅ {trade_type}订单: {quantity}股 @ 市价, 订单号: {order_id}")
 
         self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
