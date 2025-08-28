@@ -11,7 +11,7 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.0.2-Free"
+            self._version = "v2.1.0-Tiered"
             self._tier = "免费基础版"
             self._description = (
                 "🆓 免费基础定投策略 - 解决Moomoo定投痛点\n"
@@ -29,10 +29,12 @@ class Strategy(StrategyBase):
             self.print_welcome()
             
             # 核心状态变量
-            self.current_drawdown_layer = 0
+            self.current_drawdown_layer = -1  # -1表示还没有触发任何层级
             self.last_investment_time = None
             self.highest_price = None
             self.last_valid_price = 100.0  # 默认价格
+            self.strategy_start_price = None  # 策略启动价格
+            self.drawdown_reset_threshold = 0.05  # 价格上涨5%重置回撤层级
             
             # 回测支持
             import collections
@@ -71,10 +73,13 @@ class Strategy(StrategyBase):
             print(f"❌ 技术指标注册失败: {str(e)}")
 
     def global_variables(self):
-        """全局变量设置 - 简化版"""
+        """全局变量设置 - 分层版"""
         try:
+            # 版本层级选择 (核心功能)
+            self.version_tier = show_variable(1, GlobalType.INT)  # 1=免费版 2=付费版(¥35/月)
+            
             # 预设模板选择
-            self.preset_mode = show_variable(1, GlobalType.INT)  # 1=保守 2=平衡 3=积极
+            self.preset_mode = show_variable(2, GlobalType.INT)  # 1=保守 2=平衡 3=积极
             
             # 基础参数（在预设基础上可微调）
             self.qty = show_variable(20, GlobalType.INT)  # 每次定投股数
@@ -138,19 +143,48 @@ class Strategy(StrategyBase):
             self.risk_level = "未知"
 
     def print_welcome(self):
-        """打印欢迎信息"""
+        """打印欢迎信息 - 分层版"""
+        version_info = {
+            1: {"name": "免费基础版", "features": "固定定投+风险提醒", "color": "🆓"},
+            2: {"name": "付费进阶版(¥35/月)", "features": "3层智能加仓系统", "color": "💎"}
+        }
+        
+        current_version = version_info.get(self.version_tier, version_info[1])
+        
         print("\n" + "="*60)
-        print(f"🚀 {self._tier} {self._version}")
+        print(f"🚀 DCA智能定投策略 {self._version}")
         print("="*60)
-        print(self._description)
+        print(f"{current_version['color']} 当前版本: {current_version['name']}")
+        print(f"✨ 核心功能: {current_version['features']}")
+        
+        if self.version_tier == 1:
+            print("\n🆓 免费版功能:")
+            print("   ✅ 固定周期智能定投")
+            print("   ✅ 基础回撤监控提醒")
+            print("   ✅ 风险保护系统")
+            print("   ✅ 投资记录统计")
+        elif self.version_tier == 2:
+            print("\n💎 付费版功能 (¥35/月):")
+            print("   ✅ 包含免费版所有功能")
+            print("   ✅ 3层智能加仓 (5%/10%/20%)")
+            print("   ✅ 动态倍数调整 (1.5x/2x/3x)")
+            print("   ✅ 个性化参数配置")
+            print("   ✅ 极端回撤保护")
+            
         print("\n📊 当前配置:")
-        print(f"   模板: {self.preset_name} ({self.preset_desc})")
+        print(f"   版本等级: {self.version_tier} ({'免费版' if self.version_tier == 1 else '付费版'})")
+        print(f"   投资模板: {self.preset_name} ({self.preset_desc})")
         print(f"   风险等级: {self.risk_level}")
         print(f"   定投数量: {self.qty}股")
         print(f"   定投周期: {self.interval_min}分钟 ({self._get_interval_desc()})")
-        print(f"   回撤保护: {len(self.drawdown_layers)}层 {self.drawdown_layers}")
+        print(f"   回撤阈值: {self.drawdown_layers}")
         print(f"   运行模式: {'回测' if self.backtest else '实盘'}")
-        print("\n💡 提示: 如需8层回撤+成本定投算法，可联系作者获取付费版")
+        
+        if self.version_tier == 1:
+            print("\n🎯 升级提示:")
+            print("   💡 付费版支持智能3层加仓，回撤时自动增加投资")
+            print("   💡 联系作者升级至付费版(¥35/月)解锁完整功能")
+        
         print("="*60 + "\n")
 
     def _get_interval_desc(self):
@@ -165,7 +199,7 @@ class Strategy(StrategyBase):
             return f"{self.interval_min}分钟"
 
     def handle_data(self):
-        """主要交易逻辑"""
+        """主要交易逻辑 - 分层架构"""
         try:
             current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
             latest_price, highest_price, account_balance = self.get_market_data()
@@ -173,37 +207,21 @@ class Strategy(StrategyBase):
             # 计算回撤和持仓信息
             drawdown = self.calculate_drawdown(latest_price)
             position = self.get_position()
-            total_cost = self.get_total_cost()
-            average_cost = self.get_avg_cost()
-            market_value = position * latest_price
-            profit = market_value - total_cost
             
             if self.log_level >= 1:
-                print(f"📊 市场数据: 价格={latest_price:.2f}, 回撤={drawdown:.2f}%, 持仓={position}, 成本={average_cost:.2f}, 盈亏={profit:.2f}")
+                print(f"📊 价格={latest_price:.2f}, 回撤={drawdown:.2f}%, 持仓={position}, 最高价={self.highest_price:.2f}")
 
-            # 免费版策略逻辑
-            if self.basic_invest_only:
-                # 纯定投模式
-                if self.should_invest(current_time):
-                    self.execute_investment(latest_price, account_balance, self.qty, "定投")
-                return
-
-            # 极端回撤保护
-            if drawdown >= self.extreme_drawdown_pct:
-                print(f"⚠️ 极端回撤保护触发 ({drawdown:.2f}% >= {self.extreme_drawdown_pct}%)")
-                if self.should_invest(current_time):
-                    self.execute_investment(latest_price, account_balance, self.qty, "极端回撤-仅定投")
-                return
-
-            # 分层回撤加仓逻辑
-            add_qty = self.calculate_add_position_qty(drawdown)
-            if add_qty > 0:
-                self.execute_investment(latest_price, account_balance, add_qty, "回撤加仓")
-                return
-
-            # 常规定投
-            if self.should_invest(current_time):
-                self.execute_investment(latest_price, account_balance, self.qty, "定期定投")
+            # 分层功能路由
+            if self.version_tier == 1:
+                # 免费版逻辑
+                self.free_version_logic(current_time, latest_price, account_balance, drawdown)
+            elif self.version_tier == 2:
+                # 付费版逻辑 
+                self.advanced_version_logic(current_time, latest_price, account_balance, drawdown)
+            else:
+                # 默认免费版
+                print("⚠️ 版本参数错误，使用免费版功能")
+                self.free_version_logic(current_time, latest_price, account_balance, drawdown)
 
         except Exception as e:
             import traceback
@@ -276,13 +294,27 @@ class Strategy(StrategyBase):
             return latest_price, highest_price, account_balance
 
     def calculate_drawdown(self, latest_price):
-        """计算回撤幅度"""
-        if self.highest_price is None:
+        """计算回撤幅度 - 修复版"""
+        # 初始化策略启动价格和最高价
+        if self.strategy_start_price is None:
+            self.strategy_start_price = latest_price
             self.highest_price = latest_price
-        # 使用条件判断替代max()函数
+            return 0.0
+            
+        # 更新最高价（只能上升，不能下降）
         if latest_price > self.highest_price:
             self.highest_price = latest_price
-        return (self.highest_price - latest_price) / self.highest_price * 100
+            # 价格创新高时，重置回撤层级（可选）
+            if (latest_price - self.highest_price) / self.highest_price > self.drawdown_reset_threshold:
+                self.current_drawdown_layer = -1  # 重置为未触发状态
+        
+        # 计算当前回撤
+        if self.highest_price > 0:
+            drawdown = (self.highest_price - latest_price) / self.highest_price * 100
+        else:
+            drawdown = 0.0
+            
+        return drawdown
 
     def calculate_add_position_qty(self, drawdown):
         """计算加仓数量 - 免费版3层"""
@@ -308,12 +340,63 @@ class Strategy(StrategyBase):
         elapsed = (current_time - self.last_investment_time).total_seconds() / 60
         return elapsed >= self.interval_min
 
+    def free_version_logic(self, current_time, latest_price, account_balance, drawdown):
+        """免费版策略逻辑 - 基础定投 + 风险提醒"""
+        
+        # 风险提醒功能
+        if drawdown >= 20.0:
+            print(f"⚠️ 免费版风险提醒: 当前回撤{drawdown:.1f}%，建议关注市场变化")
+        elif drawdown >= 10.0:
+            print(f"📢 回撤监控: 当前回撤{drawdown:.1f}%")
+            
+        # 纯定投模式或基础回撤保护
+        if self.basic_invest_only:
+            if self.should_invest(current_time):
+                self.execute_investment(latest_price, account_balance, self.qty, "基础定投")
+        else:
+            # 仅常规定投，不加仓
+            if self.should_invest(current_time):
+                self.execute_investment(latest_price, account_balance, self.qty, "定期定投")
+
+    def advanced_version_logic(self, current_time, latest_price, account_balance, drawdown):
+        """付费版策略逻辑 (¥35/月) - 智能3层加仓系统"""
+        
+        # 检查版本授权（实际使用时可连接服务器验证）
+        if self.version_tier != 2:
+            print("💡 3层智能加仓功能需要升级到付费版(¥35/月)，请联系作者")
+            print("📱 当前使用免费版功能...")
+            return self.free_version_logic(current_time, latest_price, account_balance, drawdown)
+        
+        # 极端回撤保护
+        if drawdown >= self.extreme_drawdown_pct:
+            print(f"🚨 极端回撤保护: {drawdown:.1f}% >= {self.extreme_drawdown_pct}%，仅定投模式")
+            if self.should_invest(current_time):
+                self.execute_investment(latest_price, account_balance, self.qty, "极端回撤保护")
+            return
+
+        # 智能3层加仓系统
+        add_qty = self.calculate_add_position_qty(drawdown)
+        if add_qty > 0:
+            self.execute_investment(latest_price, account_balance, add_qty, f"付费版-第{self.current_drawdown_layer+1}层加仓")
+            return
+
+        # 常规定投
+        if self.should_invest(current_time):
+            self.execute_investment(latest_price, account_balance, self.qty, "付费版-定期定投")
+
     def execute_investment(self, latest_price, account_balance, quantity, trade_type="定投"):
         """执行投资"""
-        # 参数合法性检查
-        if quantity < 10 or quantity > 1000 or quantity % 10 != 0:
-            print(f"⚠️ 参数修正: 投资数量 {quantity} -> 20股")
-            quantity = 20
+        # 参数合法性检查 - 付费版支持更灵活的数量
+        if self.version_tier == 2:
+            # 付费版：支持任意数量，仅检查基本范围
+            if quantity < 1 or quantity > 1000:
+                print(f"⚠️ 付费版参数修正: 投资数量 {quantity} -> 20股")
+                quantity = 20
+        else:
+            # 免费版：必须是10的倍数
+            if quantity < 10 or quantity > 1000 or quantity % 10 != 0:
+                print(f"⚠️ 免费版参数修正: 投资数量 {quantity} -> 20股")
+                quantity = 20
 
         if self.backtest:
             # 回测模式 - 使用place_market产生GUI交易打点
