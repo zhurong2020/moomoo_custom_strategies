@@ -83,8 +83,24 @@ docs/business_*.md
 **/user_conversion_*
 **/pricing_analysis_*
 
+# Personal information and contacts
+**/personal_*
+**/contact_*
+**/client_*
+user_data/
+customer_info/
+
 # Private configuration and API keys
 config/private_*
 *.key
 *.secret
 api_keys.txt
+.env.local
+.env.production
+
+# Temporary development files
+*.tmp
+*.temp
+.scratch/
+debug_*
+test_personal_*

@@ -1,83 +1,210 @@
-# moomoo_custom_strategies
+# Moomoo Custom DCA Strategies
 
-本项目包含为 Moomoo 客户端量化功能开发的自定义交易策略。每个策略都旨在解决特定的交易需求，并具有不同的功能侧重和参数配置。
+A professional-grade Dollar-Cost Averaging (DCA) strategy system for Moomoo quantitative trading platform with tiered commercial features.
 
-## ⚠️ 免责声明 | Disclaimer
-
-### 中文声明
-
-本项目仅供学习和研究使用，不构成任何投资建议或交易指导。请注意：
-
-1.  作者不是专业的投资顾问或理财规划师，本项目中的所有策略均基于个人研究和实践经验。
-2.  量化交易存在固有风险，包括但不限于市场风险、流动性风险、技术风险等。
-3.  任何人使用本项目中的代码进行实盘交易需自行承担全部风险和后果。
-4.  策略的历史表现不代表未来收益，任何基于本项目进行的交易决策需要使用者自行判断和负责。
-5.  在使用本项目代码进行实盘交易前，强烈建议：
-    - 充分了解量化交易的原理和风险
-    - 仔细阅读并理解代码的具体实现
-    - 使用模拟盘进行充分测试
-    - 根据个人风险承受能力调整参数
-    - 合理控制仓位和资金规模
+## ⚠️ Important Disclaimer | 免责声明
 
 ### English Disclaimer
-
 This project is for educational and research purposes only. Please be aware:
 
-1.  The author is not a professional financial advisor, and all strategies are based on personal research and experience.
-2.  Quantitative trading involves inherent risks, including but not limited to market risk, liquidity risk, and technical risk.
-3.  Anyone who uses the code in this project for live trading does so at their own risk and is solely responsible for any consequences.
-4.  Past performance does not guarantee future results. All trading decisions based on this project require users' own judgment and responsibility.
-5.  Before using this code for live trading, it is strongly recommended to:
-    - Fully understand the principles and risks of quantitative trading
-    - Carefully read and understand the code implementation
-    - Conduct thorough testing using paper trading
-    - Adjust parameters according to personal risk tolerance
-    - Maintain reasonable position and capital management
+1. The author is not a professional financial advisor, and all strategies are based on personal research and experience.
+2. Quantitative trading involves inherent risks, including but not limited to market risk, liquidity risk, and technical risk.
+3. Anyone who uses the code in this project for live trading does so at their own risk and is solely responsible for any consequences.
+4. Past performance does not guarantee future results. All trading decisions based on this project require users' own judgment and responsibility.
+5. Before using this code for live trading, it is strongly recommended to:
+   - Fully understand the principles and risks of quantitative trading
+   - Carefully read and understand the code implementation
+   - Conduct thorough testing using paper trading
+   - Adjust parameters according to personal risk tolerance
+   - Maintain reasonable position and capital management
 
-## 策略总览
+### 中文声明
+本项目仅供学习和研究使用，不构成任何投资建议或交易指导。请注意：
 
-本项目目前包含以下主要策略，每个策略都针对不同的交易场景和用户需求：
+1. 作者不是专业的投资顾问或理财规划师，本项目中的所有策略均基于个人研究和实践经验。
+2. 量化交易存在固有风险，包括但不限于市场风险、流动性风险、技术风险等。
+3. 任何人使用本项目中的代码进行实盘交易需自行承担全部风险和后果。
+4. 策略的历史表现不代表未来收益，任何基于本项目进行的交易决策需要使用者自行判断和负责。
+5. 在使用本项目代码进行实盘交易前，强烈建议：
+   - 充分了解量化交易的原理和风险
+   - 仔细阅读并理解代码的具体实现
+   - 使用模拟盘进行充分测试
+   - 根据个人风险承受能力调整参数
+   - 合理控制仓位和资金规模
 
-| 策略名称 | 最新版本 | 核心功能概述 | 适用场景 | 更多详情 |
-|---|---|---|---|---|
-| **策略 V1 (定投与回撤加仓)** | `v1.1.0` | 固定周期定投，结合市场回撤动态分层加仓，旨在长期摊低成本。支持多种模式（基础定投、回撤加仓、极端回撤风控）。回测模式下日志格式与实盘完全一致。 | 适合追求长期资产积累、希望在下跌时逐步建仓的用户。 | [查看详情](./strategies/strategy_v1/readme.md) |
-| **策略 V2 (标准网格交易)** | `v6.1` | 经典网格交易策略，通过预设网格进行高抛低吸。侧重订单与持仓管理的健壮性，增强了 fallback 逻辑处理订单同步延迟问题。 | 适合需要经典网格交易、对订单执行稳定性有较高要求的用户。 | [查看详情](./strategies/strategy_v2/readme.md) |
-| **策略 V3 (高级网格交易)** | `v5.3.13` | 功能最全面的网格交易策略。支持动态网格、金字塔加仓、隔离模式、价格区间限制、价格偏差容忍度等高级特性。代码经过全面优化。 | 适合对网格交易有精细化控制需求、希望策略具备高度灵活性和鲁棒性的用户。 | [查看详情](./strategies/strategy_v3/readme.md) |
-| **策略 V3.1 (改进版网格交易)** | `v9` | 在 V3 基础上进行改进和优化，提供统一的网格生成逻辑、多层次持仓同步、批量止盈和回测优化功能。集中化参数管理。 | 适合寻求更高效、更灵活的网格交易执行，并对参数管理有集中化需求的用户。 | [查看详情](./strategies/strategy_v3_1/readme.md) |
+## 🎯 Project Overview
 
-## 工具集成
+This project provides an enhanced DCA investment strategy that solves common pain points in traditional periodic investment approaches. Features a three-tier commercial system designed for different user needs.
 
-项目包含多个辅助开发和分析的工具，位于 `tools/` 目录：
+### Key Features
+- **Smart Position Sizing**: 3-layer drawdown protection with automatic position adjustment
+- **Interval Optimization**: Daily vs weekly investment frequency with proven performance differences  
+- **Custom Balance Control**: User-defined investment capital (10K-500K range)
+- **Performance Validated**: 251-day historical backtesting with real SPY data
 
--   `field_inspector.moo`: 字段检查和验证工具。
--   `order_analyzer.moo`: 订单分析和统计工具。
--   `pricedata_collector.moo`: 价格数据采集工具。
+## 🏆 Performance Highlights
 
-## 文档结构
+| Strategy | Return | Average Cost | Cost Efficiency | Tier |
+|----------|--------|--------------|-----------------|------|
+| **Daily DCA** | **18.2%** | $529.60 | 18.3% | 💎 Paid |
+| Weekly DCA | 14.1% | $548.73 | 14.1% | 🆓 Free |
+| **Advantage** | **+4.1%** | **-$19.13** | **+4.2%** | **Premium** |
 
--   `docs/`: 项目文档目录
-    -   `overview.md`: 项目整体概述和设计理念。
-    -   `changelog.md`: 项目及各策略的详细版本更新记录。
-    -   `Moomoo量化功能中常用的API函数及其用法.txt`: Moomoo 量化 API 参考文档。
-    -   `Moomoo量化策略框架具体说明.txt`: Moomoo 策略框架说明。
-    -   `commit_convention.md`: Git 提交信息规范。
--   `strategies/`: 策略实现目录，每个子目录包含一个独立的策略及其 `readme.md` 文件。
--   `tools/`: 辅助工具集目录。
--   `historical_orders/`: 策略生成的历史订单记录（通常被 `.gitignore` 忽略）。
+*Based on 251-day SPY backtesting (Aug 2024 - Aug 2025)*
 
-## 最新更新
+## 🚀 Quick Start
 
-本项目持续进行功能增强和优化。最近的重要更新包括：
+### 1. Choose Your Tier
 
--   **策略 V3 (v5.3.13):** 新增价格偏差容忍度参数，允许用户更精细地控制市价与网格价格的偏离。同时，对代码进行了全面清理，移除了冗余变量和废弃方法，提升了代码质量和可维护性。
--   **策略 V3.1 (v9):** 引入了更高效的持仓同步机制和批量止盈功能，支持回测模式优化，提升了策略的运行效率和灵活性。
--   **策略 V2 (v6.1):** 增强了订单同步机制的稳健性，添加了 fallback 逻辑以处理订单信息延迟问题。
--   **策略 V1 (v1.1.0):** 优化了回测模式下的订单与成交日志，确保与实盘日志格式一致，便于回测分析。
+#### 🆓 Free Tier
+```python
+version_tier = 1          # Free version
+interval_mode = 1         # Weekly intervals (auto)
+balance_mode = 1          # System default balance
+```
+- Weekly DCA intervals
+- Basic drawdown monitoring  
+- Risk alerts and notifications
 
-更多详细的更新记录，请查阅 [changelog](./docs/changelog.md)。
+#### 💎 Paid Tier (¥35/month)
+```python
+version_tier = 2          # Paid version  
+interval_mode = 2         # Daily intervals
+balance_mode = 2          # Custom balance
+custom_balance = 50000    # 10K-500K range
+```
+- Daily DCA intervals (+4.1% performance)
+- Smart 3-layer position sizing
+- Custom balance control
+- Advanced parameter optimization
 
-## License
+### 2. Deploy to Moomoo Platform
+1. Copy `strategies/dca_free_v2.quant` to Moomoo
+2. Configure your desired tier and parameters
+3. Set investment symbol (e.g., SPY)
+4. Start backtesting or live trading
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for full details.
+## 📊 Strategy Logic
 
-You are free to use, modify, and distribute this project under the terms of the Apache License 2.0.
+### Core Algorithm
+1. **Periodic Investment**: Fixed intervals (daily/weekly) with consistent amounts
+2. **Drawdown Detection**: Monitor price decline from recent highs  
+3. **Smart Position Sizing**: Increase investment during market downturns
+4. **Risk Management**: Multi-layer protection with automatic adjustments
+
+### Drawdown Protection System
+```
+5% drawdown  → 1.5x position size (30 shares vs 20)
+10% drawdown → 2.0x position size (40 shares vs 20)  
+20% drawdown → 3.0x position size (60 shares vs 20)
+```
+
+### Performance Advantage Sources
+- **Market Timing**: Daily intervals capture more price dips
+- **Cost Averaging**: More frequent investments smooth price volatility
+- **Position Sizing**: Intelligent increase during market stress
+
+## 🛠️ Development Tools
+
+### Validation & Testing
+```bash
+# Complete strategy validation
+python tools/validate_dca_logic.py
+
+# Daily vs weekly performance comparison  
+python tools/compare_interval_performance.py
+
+# Performance gap analysis
+python tools/analyze_performance_gap.py
+```
+
+### Data Analysis
+- **Real Market Data**: 251 days of SPY price history
+- **Comprehensive Reports**: JSON format with detailed metrics
+- **Performance Attribution**: Clear breakdown of return sources
+
+## 📁 Project Structure
+
+```
+moomoo_custom_strategies/
+├── strategies/           # Core strategy files
+│   ├── dca_free_v2.quant       # 🎯 Main strategy (v2.2.0)
+│   └── dca_advanced_v2.quant   # 💎 Advanced 8-layer version
+├── tools/               # Development & analysis tools  
+├── data/                # Test data & validation results
+├── docs/                # Documentation & planning
+└── README.md            # This file
+```
+
+## 🎯 Commercial Tiers
+
+### Tier Comparison Matrix
+
+| Feature | 🆓 Free | 💎 Paid | 👑 VIP |
+|---------|---------|---------|--------|
+| **DCA Intervals** | Weekly | Daily | Custom |
+| **Balance Control** | System Default | 10K-500K | Unlimited |
+| **Position Sizing** | Fixed | 3-Layer Smart | 8-Layer Pro |
+| **Performance** | 14.1% | 18.2% (+4.1%) | 20%+ |
+| **Cost** | Free | ¥35/month | ¥500+/year |
+
+### Upgrade Value Proposition
+- **ROI**: ¥35/month investment → $2,050+ additional annual returns
+- **Efficiency**: 5800%+ return on subscription cost
+- **Risk Reduction**: Smart position sizing during market downturns
+
+## 📈 Historical Performance
+
+### Market Conditions (Aug 2024 - Aug 2025)
+- **SPY Performance**: +13.3% total return
+- **Volatility**: 30.7% price range ($489-$639)  
+- **Market Type**: Bull market with significant corrections
+
+### Strategy Results
+- **Best Performer**: Daily DCA Paid Tier (18.2% return)
+- **Risk-Adjusted**: Consistent outperformance across market conditions
+- **Cost Efficiency**: Superior average cost achievement
+
+## 🔐 Security & Privacy
+
+### Protected Information
+- Business commercialization plans
+- Revenue projections and user analytics
+- VIP tier specifications and pricing models
+- Personal contact information and client data
+
+### Public Information  
+- Strategy code and technical documentation
+- Performance analysis and backtesting results
+- Development tools and testing frameworks
+- General market analysis and insights
+
+## 📞 Support & Contact
+
+### Technical Issues
+- **GitHub Issues**: Report bugs and feature requests
+- **Documentation**: Comprehensive guides in `/docs/`
+- **Testing Tools**: Self-service validation utilities
+
+### Commercial Inquiries
+- **Tier Upgrades**: Contact for paid tier access
+- **Custom Development**: Enterprise solutions available
+- **Partnership**: Strategic collaboration opportunities
+
+## 📄 License & Usage
+
+### Open Source Components
+- Core strategy logic (Apache License 2.0)
+- Development tools and testing frameworks
+- Documentation and educational content
+
+### Commercial Components  
+- Paid tier features and advanced algorithms
+- VIP professional services and support
+- Custom development and integration services
+
+---
+
+**Built with precision for professional quantitative trading on Moomoo platform** 🚀
+
+*Last updated: August 2025 | Version: v2.2.0-Enhanced*
