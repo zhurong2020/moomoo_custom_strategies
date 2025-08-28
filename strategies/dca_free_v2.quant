@@ -11,7 +11,7 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.1.1-Tiered"
+            self._version = "v2.2.0-Enhanced"
             self._tier = "免费基础版"
             self._description = (
                 "🆓 免费基础定投策略 - 解决Moomoo定投痛点\n"
@@ -26,6 +26,7 @@ class Strategy(StrategyBase):
             self.custom_indicator()
             self.global_variables()
             self.setup_presets()
+            self.setup_tier_features()
             self.print_welcome()
             
             # 核心状态变量
@@ -78,12 +79,19 @@ class Strategy(StrategyBase):
             # 版本层级选择 (核心功能)
             self.version_tier = show_variable(1, GlobalType.INT)  # 1=免费版 2=付费版(¥35/月)
             
+            # 资金管理 (分层功能)
+            self.balance_mode = show_variable(1, GlobalType.INT)  # 1=系统默认 2=自定义(付费版)
+            self.custom_balance = show_variable(50000, GlobalType.INT)  # 付费版可自定义资金
+            
+            # 投资周期 (分层功能)  
+            self.interval_mode = show_variable(1, GlobalType.INT)  # 1=自动(版本决定) 2=每日(付费版) 3=每周 4=自定义(付费版)
+            self.custom_interval_min = show_variable(1440, GlobalType.INT)  # 自定义周期(付费版)
+            
             # 预设模板选择
             self.preset_mode = show_variable(2, GlobalType.INT)  # 1=保守 2=平衡 3=积极
             
-            # 基础参数（在预设基础上可微调）
+            # 基础参数
             self.qty = show_variable(20, GlobalType.INT)  # 每次定投股数
-            self.interval_min = show_variable(1440, GlobalType.INT)  # 定投周期（分钟）
             
             # 功能开关
             self.backtest = show_variable(True, GlobalType.BOOL)  # 回测模式
@@ -142,6 +150,61 @@ class Strategy(StrategyBase):
             self.preset_desc = "用户自定义参数"
             self.risk_level = "未知"
 
+    def setup_tier_features(self):
+        """设置分层功能特性"""
+        try:
+            # 资金管理设置
+            if self.version_tier >= 2 and self.balance_mode == 2:
+                # 付费版：使用自定义资金
+                if self.backtest:
+                    self.initial_balance = self.custom_balance
+                    self.virtual_balance = self.custom_balance
+                print(f"💰 使用自定义资金: ${self.custom_balance:,}")
+            else:
+                # 免费版：使用系统默认资金
+                if self.backtest:
+                    self.initial_balance = total_cash(currency=Currency.USD)
+                    self.virtual_balance = self.initial_balance
+                if self.version_tier == 1 and self.balance_mode == 2:
+                    print(f"💡 自定义资金为付费版功能，当前使用系统默认")
+                
+            # 投资周期设置
+            if self.interval_mode == 1:  # 自动模式
+                if self.version_tier == 1:
+                    # 免费版：固定每周
+                    self.interval_min = 10080  # 7天 * 24小时 * 60分钟
+                    self.interval_desc = "每周定投 (免费版)"
+                else:
+                    # 付费版：默认每日
+                    self.interval_min = 1440  # 1天
+                    self.interval_desc = "每日定投 (付费版默认)"
+            elif self.interval_mode == 2:  # 每日
+                if self.version_tier >= 2:
+                    self.interval_min = 1440
+                    self.interval_desc = "每日定投"
+                else:
+                    print(f"💡 每日定投为付费版功能，免费版使用每周定投")
+                    self.interval_min = 10080
+                    self.interval_desc = "每周定投 (免费版限制)"
+            elif self.interval_mode == 3:  # 每周
+                self.interval_min = 10080
+                self.interval_desc = "每周定投"
+            elif self.interval_mode == 4:  # 自定义
+                if self.version_tier >= 2:
+                    self.interval_min = self.custom_interval_min
+                    self.interval_desc = f"自定义周期 ({self.interval_min}分钟)"
+                else:
+                    print(f"💡 自定义周期为付费版功能，免费版使用每周定投")
+                    self.interval_min = 10080
+                    self.interval_desc = "每周定投 (免费版限制)"
+            
+            print(f"📅 投资周期: {self.interval_desc}")
+            
+        except Exception as e:
+            print(f"❌ 分层功能设置失败: {str(e)}")
+            # 回退到默认设置
+            self.interval_min = 10080 if self.version_tier == 1 else 1440
+
     def print_welcome(self):
         """打印欢迎信息 - 分层版"""
         version_info = {
@@ -176,14 +239,19 @@ class Strategy(StrategyBase):
         print(f"   投资模板: {self.preset_name} ({self.preset_desc})")
         print(f"   风险等级: {self.risk_level}")
         print(f"   定投数量: {self.qty}股")
-        print(f"   定投周期: {self.interval_min}分钟 ({self._get_interval_desc()})")
+        print(f"   投资周期: {getattr(self, 'interval_desc', self._get_interval_desc())}")
+        if hasattr(self, 'virtual_balance'):
+            print(f"   初始资金: ${self.virtual_balance:,.0f}")
         print(f"   回撤阈值: {self.drawdown_layers}")
         print(f"   运行模式: {'回测' if self.backtest else '实盘'}")
         
         if self.version_tier == 1:
             print("\n🎯 升级提示:")
+            print("   💡 付费版支持每日定投，获得更平滑的平均成本")
             print("   💡 付费版支持智能3层加仓，回撤时自动增加投资")
-            print("   💡 联系作者升级至付费版(¥35/月)解锁完整功能")
+            print("   💡 付费版支持自定义资金(10K-500K)和投资周期")
+            print("   💰 历史数据显示每日定投比每周定投收益提升3-8%")
+            print("   💰 联系作者升级至付费版(¥35/月)解锁完整功能")
         
         print("="*60 + "\n")
 

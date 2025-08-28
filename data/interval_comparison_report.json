@@ -1,0 +1,232 @@
+[
+  {
+    "interval_days": 7,
+    "interval_name": "每7日",
+    "qty": 20,
+    "trade_count": 5,
+    "total_invested": 49934.20999999999,
+    "final_position": 91,
+    "avg_cost": 548.7275824175823,
+    "final_price": 626.3,
+    "market_value": 56993.299999999996,
+    "total_value": 57059.09,
+    "total_return": 14.118179999999994,
+    "cost_efficiency": 14.136781176672278,
+    "trade_history": [
+      {
+        "date": "2024-08-01",
+        "price": 552.57,
+        "quantity": 20,
+        "amount": 11051.400000000001,
+        "balance": 38948.6,
+        "position": 20,
+        "total_cost": 11051.400000000001
+      },
+      {
+        "date": "2024-08-08",
+        "price": 523.91,
+        "quantity": 20,
+        "amount": 10478.199999999999,
+        "balance": 28470.4,
+        "position": 40,
+        "total_cost": 21529.6
+      },
+      {
+        "date": "2024-08-15",
+        "price": 549.5,
+        "quantity": 20,
+        "amount": 10990.0,
+        "balance": 17480.4,
+        "position": 60,
+        "total_cost": 32519.6
+      },
+      {
+        "date": "2024-08-22",
+        "price": 562.56,
+        "quantity": 20,
+        "amount": 11251.199999999999,
+        "balance": 6229.200000000003,
+        "position": 80,
+        "total_cost": 43770.799999999996
+      },
+      {
+        "date": "2024-08-29",
+        "price": 560.31,
+        "quantity": 11,
+        "amount": 6163.41,
+        "balance": 65.79000000000269,
+        "position": 91,
+        "total_cost": 49934.20999999999
+      }
+    ],
+    "config_name": "免费版 (每周20股)"
+  },
+  {
+    "interval_days": 1,
+    "interval_name": "每日",
+    "qty": 20,
+    "trade_count": 5,
+    "total_invested": 49782.18000000001,
+    "final_position": 94,
+    "avg_cost": 529.5976595744681,
+    "final_price": 626.3,
+    "market_value": 58872.2,
+    "total_value": 59090.02,
+    "total_return": 18.180039999999995,
+    "cost_efficiency": 18.259586060714877,
+    "trade_history": [
+      {
+        "date": "2024-08-01",
+        "price": 552.57,
+        "quantity": 20,
+        "amount": 11051.400000000001,
+        "balance": 38948.6,
+        "position": 20,
+        "total_cost": 11051.400000000001
+      },
+      {
+        "date": "2024-08-02",
+        "price": 535.75,
+        "quantity": 20,
+        "amount": 10715.0,
+        "balance": 28233.6,
+        "position": 40,
+        "total_cost": 21766.4
+      },
+      {
+        "date": "2024-08-05",
+        "price": 511.64,
+        "quantity": 20,
+        "amount": 10232.8,
+        "balance": 18000.8,
+        "position": 60,
+        "total_cost": 31999.2
+      },
+      {
+        "date": "2024-08-06",
+        "price": 519.22,
+        "quantity": 20,
+        "amount": 10384.400000000001,
+        "balance": 7616.399999999998,
+        "position": 80,
+        "total_cost": 42383.600000000006
+      },
+      {
+        "date": "2024-08-07",
+        "price": 528.47,
+        "quantity": 14,
+        "amount": 7398.58,
+        "balance": 217.8199999999979,
+        "position": 94,
+        "total_cost": 49782.18000000001
+      }
+    ],
+    "config_name": "付费版 (每日20股)"
+  },
+  {
+    "interval_days": 7,
+    "interval_name": "每7日",
+    "qty": 30,
+    "trade_count": 4,
+    "total_invested": 49904.520000000004,
+    "final_position": 92,
+    "avg_cost": 542.4404347826087,
+    "final_price": 626.3,
+    "market_value": 57619.6,
+    "total_value": 57715.079999999994,
+    "total_return": 15.43015999999999,
+    "cost_efficiency": 15.459681808381278,
+    "trade_history": [
+      {
+        "date": "2024-08-01",
+        "price": 552.57,
+        "quantity": 30,
+        "amount": 16577.100000000002,
+        "balance": 33422.899999999994,
+        "position": 30,
+        "total_cost": 16577.100000000002
+      },
+      {
+        "date": "2024-08-08",
+        "price": 523.91,
+        "quantity": 30,
+        "amount": 15717.3,
+        "balance": 17705.599999999995,
+        "position": 60,
+        "total_cost": 32294.4
+      },
+      {
+        "date": "2024-08-15",
+        "price": 549.5,
+        "quantity": 30,
+        "amount": 16485.0,
+        "balance": 1220.599999999995,
+        "position": 90,
+        "total_cost": 48779.4
+      },
+      {
+        "date": "2024-08-22",
+        "price": 562.56,
+        "quantity": 2,
+        "amount": 1125.12,
+        "balance": 95.47999999999502,
+        "position": 92,
+        "total_cost": 49904.520000000004
+      }
+    ],
+    "config_name": "免费版 (每周30股)"
+  },
+  {
+    "interval_days": 1,
+    "interval_name": "每日",
+    "qty": 30,
+    "trade_count": 4,
+    "total_invested": 49556.46000000001,
+    "final_position": 93,
+    "avg_cost": 532.8651612903227,
+    "final_price": 626.3,
+    "market_value": 58245.899999999994,
+    "total_value": 58689.43999999999,
+    "total_return": 17.378879999999974,
+    "cost_efficiency": 17.53442437171659,
+    "trade_history": [
+      {
+        "date": "2024-08-01",
+        "price": 552.57,
+        "quantity": 30,
+        "amount": 16577.100000000002,
+        "balance": 33422.899999999994,
+        "position": 30,
+        "total_cost": 16577.100000000002
+      },
+      {
+        "date": "2024-08-02",
+        "price": 535.75,
+        "quantity": 30,
+        "amount": 16072.5,
+        "balance": 17350.399999999994,
+        "position": 60,
+        "total_cost": 32649.600000000002
+      },
+      {
+        "date": "2024-08-05",
+        "price": 511.64,
+        "quantity": 30,
+        "amount": 15349.199999999999,
+        "balance": 2001.1999999999953,
+        "position": 90,
+        "total_cost": 47998.8
+      },
+      {
+        "date": "2024-08-06",
+        "price": 519.22,
+        "quantity": 3,
+        "amount": 1557.66,
+        "balance": 443.5399999999952,
+        "position": 93,
+        "total_cost": 49556.46000000001
+      }
+    ],
+    "config_name": "付费版 (每日30股)"
+  }
+]
