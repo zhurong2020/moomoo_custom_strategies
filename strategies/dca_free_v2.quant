@@ -11,7 +11,7 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.1.0-Tiered"
+            self._version = "v2.1.1-Tiered"
             self._tier = "免费基础版"
             self._description = (
                 "🆓 免费基础定投策略 - 解决Moomoo定投痛点\n"
@@ -113,7 +113,7 @@ class Strategy(StrategyBase):
             2: {  # 平衡型  
                 "name": "平衡型",
                 "description": "中等风险收益，适合大多数用户", 
-                "base_qty": 20,
+                "base_qty": None,  # 使用用户输入值
                 "interval": 1440,  # 1天
                 "risk_level": "中"
             },
@@ -133,7 +133,7 @@ class Strategy(StrategyBase):
             self.risk_level = preset["risk_level"]
             
             # 应用预设（如果用户未修改默认值）
-            if self.qty == 20:  # 默认值，应用预设
+            if preset["base_qty"] is not None and self.qty == 20:  # 仅在预设有值且用户未修改时应用
                 self.qty = preset["base_qty"]
             if self.interval_min == 1440:  # 默认值，应用预设  
                 self.interval_min = preset["interval"]
@@ -390,13 +390,13 @@ class Strategy(StrategyBase):
         if self.version_tier == 2:
             # 付费版：支持任意数量，仅检查基本范围
             if quantity < 1 or quantity > 1000:
-                print(f"⚠️ 付费版参数修正: 投资数量 {quantity} -> 20股")
-                quantity = 20
+                print(f"⚠️ 付费版参数修正: 投资数量 {quantity} -> {self.qty}股")
+                quantity = self.qty
         else:
             # 免费版：必须是10的倍数
             if quantity < 10 or quantity > 1000 or quantity % 10 != 0:
-                print(f"⚠️ 免费版参数修正: 投资数量 {quantity} -> 20股")
-                quantity = 20
+                print(f"⚠️ 免费版参数修正: 投资数量 {quantity} -> {self.qty}股")
+                quantity = self.qty
 
         if self.backtest:
             # 回测模式 - 使用place_market产生GUI交易打点
