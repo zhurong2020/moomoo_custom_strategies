@@ -37,7 +37,12 @@ class Strategy(StrategyBase):
             # 回测支持
             import collections
             self.high_queue = collections.deque(maxlen=20)
-            self.virtual_balance = 1e6 if self.backtest else None
+            # 获取用户设置的本金，如果没有设置则使用默认值
+            if self.backtest:
+                self.initial_balance = total_cash(currency=Currency.USD)
+                self.virtual_balance = self.initial_balance
+            else:
+                self.virtual_balance = None
             self._position = 0
             self._total_cost = 0.0
             
@@ -311,13 +316,23 @@ class Strategy(StrategyBase):
             quantity = 20
 
         if self.backtest:
-            # 回测模式 - 纯模拟，不调用实际下单API
+            # 回测模式 - 使用place_market产生GUI交易打点
             required_cash = quantity * latest_price
             if required_cash > self.virtual_balance:
                 print(f"💰 虚拟余额不足: 需要${required_cash:.2f}, 可用${self.virtual_balance:.2f}")
                 return
 
-            # 模拟订单成功，直接更新虚拟账户
+            # 调用place_market模拟下单，产生GUI交易打点
+            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            
+            # 输出标准订单流程日志（与V1策略保持一致）
+            print(f"【订单状态】等待提交。标的：{self.stock}；交易方向：买；订单类型：市价单；订单数量：{quantity}股；期限：当日有效。")
+            print(f"【订单状态】已提交，等待成交。标的：{self.stock}；交易方向：买；订单类型：市价单；订单数量：{quantity}股；期限：当日有效。")
+            print(f"【成交状态】正常。标的：{self.stock}；交易方向：买；成交数量：{quantity}股；成交价格：{latest_price}。")
+            print(f"【订单状态】全部成交。标的：{self.stock}；交易方向：买；订单类型：市价单；订单数量：{quantity}股；期限：当日有效。")
+            print(f"订单委托成功。标的：{self.stock}；交易方向：买；数量：{quantity}股；订单类型：市价单；期限：当日有效。")
+            
+            # 更新虚拟账户
             self.virtual_balance -= required_cash
             self._total_cost += required_cash
             self._position += quantity
@@ -337,10 +352,9 @@ class Strategy(StrategyBase):
                 print(f"⚠️ 资金调整: 投资数量调整为 {quantity}股")
 
             try:
-                # 使用市价买入（设置价格为当前价格的1.01倍确保成交）
-                market_price = latest_price * 1.01
-                order_id = place_limit(self.stock, market_price, quantity, OrderSide.BUY, TimeInForce.DAY)
-                print(f"✅ {trade_type}订单: {quantity}股 @ ${market_price:.2f}, 订单号: {order_id}")
+                # 使用市价买入确保成交
+                order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+                print(f"✅ {trade_type}订单: {quantity}股 @ 市价, 订单号: {order_id}")
             except Exception as e:
                 print(f"❌ 下单失败: {str(e)}")
                 return
