@@ -113,6 +113,11 @@ strategies/*vip*.quant
 strategies/dca_premium_v2.quant
 strategies/dca_advanced_v2.quant
 
+# Development and mixed versions (contain full code)
+strategies/dca_dev_mixed.quant
+strategies/*dev*.quant
+strategies/*mixed*.quant
+
 # Paid tier documentation and specifications
 docs/*premium*.md
 docs/*paid*.md
