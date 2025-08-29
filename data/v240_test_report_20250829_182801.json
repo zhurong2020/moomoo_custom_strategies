@@ -1,0 +1,147 @@
+{
+  "test_timestamp": "20250829_182801",
+  "test_version": "v2.4.0",
+  "test_description": "激进乘数系统综合测试",
+  "results": [
+    {
+      "aggressive_multiplier": 1.0,
+      "version_tier": 1,
+      "final_stats": {
+        "total_investment": 93758.4,
+        "total_position": 170,
+        "average_cost": 551.52,
+        "final_price": 593.09,
+        "total_value": 100825.3,
+        "profit_loss": 7066.9,
+        "profit_percentage": 7.54,
+        "max_drawdown": 20.01
+      },
+      "trading_stats": {
+        "regular_investments": 7,
+        "add_position_trades": 1,
+        "total_trades": 8,
+        "avg_trade_size": 21.2
+      },
+      "system_performance": {
+        "baseline_initialization_success": true,
+        "historical_high_price": 611.54,
+        "drawdown_layers": [
+          5.0,
+          10.0,
+          20.0
+        ],
+        "final_multipliers": [
+          1.5,
+          2.0,
+          3.0
+        ]
+      },
+      "test_name": "标准版 (免费版)"
+    },
+    {
+      "aggressive_multiplier": 1.5,
+      "version_tier": 2,
+      "final_stats": {
+        "total_investment": 89917.6,
+        "total_position": 165,
+        "average_cost": 544.96,
+        "final_price": 593.09,
+        "total_value": 97859.85,
+        "profit_loss": 7942.25,
+        "profit_percentage": 8.83,
+        "max_drawdown": 20.01
+      },
+      "trading_stats": {
+        "regular_investments": 6,
+        "add_position_trades": 1,
+        "total_trades": 7,
+        "avg_trade_size": 23.6
+      },
+      "system_performance": {
+        "baseline_initialization_success": true,
+        "historical_high_price": 611.54,
+        "drawdown_layers": [
+          5.0,
+          10.0,
+          20.0
+        ],
+        "final_multipliers": [
+          2.2,
+          3.0,
+          4.5
+        ]
+      },
+      "test_name": "适度激进"
+    },
+    {
+      "aggressive_multiplier": 2.0,
+      "version_tier": 2,
+      "final_stats": {
+        "total_investment": 97592.2,
+        "total_position": 180,
+        "average_cost": 542.18,
+        "final_price": 593.09,
+        "total_value": 106756.2,
+        "profit_loss": 9164.0,
+        "profit_percentage": 9.39,
+        "max_drawdown": 20.01
+      },
+      "trading_stats": {
+        "regular_investments": 6,
+        "add_position_trades": 1,
+        "total_trades": 7,
+        "avg_trade_size": 25.7
+      },
+      "system_performance": {
+        "baseline_initialization_success": true,
+        "historical_high_price": 611.54,
+        "drawdown_layers": [
+          5.0,
+          10.0,
+          20.0
+        ],
+        "final_multipliers": [
+          3.0,
+          4.0,
+          6.0
+        ]
+      },
+      "test_name": "激进版"
+    },
+    {
+      "aggressive_multiplier": 2.5,
+      "version_tier": 2,
+      "final_stats": {
+        "total_investment": 93798.8,
+        "total_position": 175,
+        "average_cost": 535.99,
+        "final_price": 593.09,
+        "total_value": 103790.75,
+        "profit_loss": 9991.95,
+        "profit_percentage": 10.65,
+        "max_drawdown": 20.01
+      },
+      "trading_stats": {
+        "regular_investments": 5,
+        "add_position_trades": 1,
+        "total_trades": 6,
+        "avg_trade_size": 29.2
+      },
+      "system_performance": {
+        "baseline_initialization_success": true,
+        "historical_high_price": 611.54,
+        "drawdown_layers": [
+          5.0,
+          10.0,
+          20.0
+        ],
+        "final_multipliers": [
+          3.8,
+          5.0,
+          7.5
+        ]
+      },
+      "test_name": "超激进版 (付费版上限)"
+    }
+  ]
+}
