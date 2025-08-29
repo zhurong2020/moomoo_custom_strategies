@@ -1,10 +1,10 @@
 class Strategy(StrategyBase):
-    """DCA定投策略 - 统一开发版 v2.6.0"""
+    """DCA定投策略 - 统一开发版 v2.7.0"""
 
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.6.0-MainDev"
+            self._version = "v2.7.0-MainDev"
             
             print("🚀 开始初始化 {0}".format(self._version))
             
@@ -378,38 +378,56 @@ class Strategy(StrategyBase):
             print("❌ 策略执行错误: {0}".format(str(e)))
 
     def get_market_data(self):
-        """获取市场数据 - v2.4.0简化版"""
-        if self.backtest:
-            try:
-                if not hasattr(self, 'bar_index'):
-                    self.bar_index = 0
-                self.bar_index += 1
-                
-                latest_price = bar_close(self.stock, bar_type=BarType.D1, select=1)
-                if latest_price is None or latest_price <= 0:
-                    latest_price = 100.0
-                
-                # 更新有效价格
-                if latest_price > 0:
-                    self.last_valid_price = latest_price
-                
+        """获取市场数据 - v2.7.0重构统一版"""
+        latest_price = None
+        account_balance = None
+        
+        try:
+            if self.backtest:
+                latest_price = self._get_backtest_price()
                 account_balance = self.virtual_balance
-                return latest_price, account_balance
-                
-            except Exception as e:
-                print("回测数据获取错误: {0}".format(str(e)))
-                default_balance = getattr(self, 'virtual_balance', 10000.0) or 10000.0
-                return self.last_valid_price, default_balance
-        else:
-            # 实盘模式
-            latest_price = current_price(self.stock, price_type=THType.FTH)
-            if latest_price is None or latest_price <= 0:
-                latest_price = self.last_valid_price
             else:
-                self.last_valid_price = latest_price
+                latest_price = self._get_live_price()
+                account_balance = self._get_live_balance()
             
-            account_balance = total_cash(currency=Currency.USD)
+            # 统一的价格验证和更新逻辑
+            latest_price = self._validate_and_update_price(latest_price)
+            
             return latest_price, account_balance
+            
+        except Exception as e:
+            print("市场数据获取错误: {0}".format(str(e)))
+            return self._get_fallback_data()
+    
+    def _get_backtest_price(self):
+        """获取回测价格"""
+        if not hasattr(self, 'bar_index'):
+            self.bar_index = 0
+        self.bar_index += 1
+        
+        price = bar_close(self.stock, bar_type=BarType.D1, select=1)
+        return price if price and price > 0 else 100.0
+    
+    def _get_live_price(self):
+        """获取实盘价格"""
+        return current_price(self.stock, price_type=THType.FTH)
+    
+    def _get_live_balance(self):
+        """获取实盘余额"""
+        return total_cash(currency=Currency.USD)
+    
+    def _validate_and_update_price(self, price):
+        """验证并更新价格"""
+        if price is None or price <= 0:
+            price = self.last_valid_price
+        else:
+            self.last_valid_price = price
+        return price
+    
+    def _get_fallback_data(self):
+        """获取回退数据"""
+        default_balance = getattr(self, 'virtual_balance', 10000.0) or 10000.0
+        return self.last_valid_price, default_balance
 
     def calculate_drawdown(self, latest_price):
         """计算回撤幅度 - v2.4.0修复版"""
@@ -594,72 +612,109 @@ class Strategy(StrategyBase):
             self.execute_investment(latest_price, account_balance, self.effective_qty, "付费版-定期定投")
 
     def execute_investment(self, latest_price, account_balance, quantity, trade_type="定投"):
-        """执行投资"""
+        """执行投资 - v2.7.0重构统一版"""
         
-        # 参数检查
+        # 1. 统一的参数验证
+        quantity = self._validate_investment_quantity(quantity)
+        if quantity <= 0:
+            return
+        
+        # 2. 统一的资金检查和调整
+        quantity, required_cash = self._adjust_quantity_for_balance(
+            quantity, latest_price, account_balance)
+        if quantity <= 0:
+            return
+            
+        # 3. 统一的下单执行
+        success = self._execute_order(quantity, latest_price, trade_type)
+        if not success:
+            return
+            
+        # 4. 统一的账户更新
+        self._update_account_after_trade(quantity, required_cash)
+        
+        # 5. 更新最后投资时间
+        self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+    
+    def _validate_investment_quantity(self, quantity):
+        """验证投资数量"""
         if self.version_tier == 2:
+            # 付费版参数验证
             if quantity < 1 or quantity > 1000:
                 print("⚠️ 付费版参数修正: 投资数量 {0} -> {1}股".format(quantity, self.effective_qty))
-                quantity = self.effective_qty
+                return self.effective_qty
         else:
+            # 免费版参数验证
             if quantity < 10 or quantity > 100 or quantity % 10 != 0:
                 print("⚠️ 免费版参数修正: 投资数量 {0} -> 10股".format(quantity))
-                quantity = 10
-
+                return 10
+        return quantity
+    
+    def _adjust_quantity_for_balance(self, quantity, latest_price, account_balance):
+        """根据余额调整投资数量"""
+        required_cash = quantity * latest_price
+        
         if self.backtest:
-            # 回测模式
+            return self._adjust_for_backtest_balance(quantity, latest_price, required_cash)
+        else:
+            return self._adjust_for_live_balance(quantity, latest_price, account_balance, required_cash)
+    
+    def _adjust_for_backtest_balance(self, quantity, latest_price, required_cash):
+        """回测模式资金调整"""
+        if self.virtual_balance is None:
+            self.virtual_balance = 10000.0
+        
+        if required_cash > self.virtual_balance:
+            max_qty = int(self.virtual_balance // latest_price)
+            if max_qty < 1:
+                print("💰 虚拟余额不足: ${0:.0f} < ${1:.0f}".format(self.virtual_balance, required_cash))
+                print("📊 建议: 增加initial_balance或减少投资频率")
+                return 0, 0
+            
+            quantity = max_qty
             required_cash = quantity * latest_price
+            print("⚠️ 智能资金调整: 原计划{0}股 → 实际{1}股 (剩余${2:.0f})".format(
+                int(self.effective_qty), quantity, self.virtual_balance))
+        
+        return quantity, required_cash
+    
+    def _adjust_for_live_balance(self, quantity, latest_price, account_balance, required_cash):
+        """实盘模式资金调整"""
+        if required_cash > account_balance:
+            max_qty = int((account_balance // latest_price) // 10 * 10)
+            if max_qty < 10:
+                print("💰 资金不足，无法投资")
+                return 0, 0
             
-            if self.virtual_balance is None:
-                self.virtual_balance = 10000.0
-            
-            if required_cash > self.virtual_balance:
-                # 智能资金调整
-                max_qty = int(self.virtual_balance // latest_price)
-                if max_qty < 1:
-                    print("💰 虚拟余额不足: ${0:.0f} < ${1:.0f}".format(self.virtual_balance, required_cash))
-                    print("📊 建议: 增加initial_balance或减少投资频率")
-                    return
-                quantity = max_qty
-                required_cash = quantity * latest_price
-                print("⚠️ 智能资金调整: 原计划{0}股 → 实际{1}股 (剩余${2:.0f})".format(
-                    int(self.effective_qty), quantity, self.virtual_balance))
-            
-            if quantity < 1:
-                print("💰 调整后数量不足1股")
-                return
-
-            # 下单
+            quantity = max_qty
+            required_cash = quantity * latest_price
+            print("⚠️ 资金调整: 投资数量调整为 {0}股".format(quantity))
+        
+        return quantity, required_cash
+    
+    def _execute_order(self, quantity, latest_price, trade_type):
+        """执行下单"""
+        try:
             order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
             
-            print("📊 {0}: {1}股 @ ${2:.2f}".format(trade_type, quantity, latest_price))
+            if self.backtest:
+                print("📊 {0}: {1}股 @ ${2:.2f}".format(trade_type, quantity, latest_price))
+            else:
+                print("✅ {0}订单: {1}股 @ 市价, 订单号: {2}".format(trade_type, quantity, order_id))
             
-            # 更新账户
+            return True
+            
+        except Exception as e:
+            print("❌ 下单失败: {0}".format(str(e)))
+            return False
+    
+    def _update_account_after_trade(self, quantity, required_cash):
+        """交易后更新账户"""
+        if self.backtest:
             self.virtual_balance -= required_cash
             self._total_cost += required_cash
             self._position += quantity
-            
             print("💰 余额: ${0:.2f} | 持仓: {1}股".format(self.virtual_balance, self._position))
-            
-        else:
-            # 实盘模式
-            required_cash = quantity * latest_price
-            if required_cash > account_balance:
-                max_qty = int((account_balance // latest_price) // 10 * 10)
-                if max_qty < 10:
-                    print("💰 资金不足，无法投资")
-                    return
-                quantity = max_qty
-                print("⚠️ 资金调整: 投资数量调整为 {0}股".format(quantity))
-
-            try:
-                order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
-                print("✅ {0}订单: {1}股 @ 市价, 订单号: {2}".format(trade_type, quantity, order_id))
-            except Exception as e:
-                print("❌ 下单失败: {0}".format(str(e)))
-                return
-
-        self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
 
     def get_position(self):
         """获取持仓数量"""
