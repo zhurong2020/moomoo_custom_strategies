@@ -1,5 +1,5 @@
 class Strategy(StrategyBase):
-    """混合开发版DCA定投策略 - v2.2.4-FixedInit
+    """混合开发版DCA定投策略 - v2.2.5-EnhancedParams
     
     包含免费版和付费版完整功能的开发调试版本
     - 通过version_tier参数控制功能层级
@@ -8,7 +8,13 @@ class Strategy(StrategyBase):
     - 用于开发调试、功能测试和性能验证
     - 分发时需生成对应的稳定版本
     
-    [v2.2.4 重大修复]
+    [v2.2.5 参数优化]
+    - 修复basic_invest_only布尔值类型处理问题
+    - 增强参数类型验证和自动转换功能
+    - 完善GUI参数验证：积极型预设、付费版每日定投正常
+    - 优化调试信息显示，增加参数类型检查
+    
+    [v2.2.4 重大修复]  
     - 修复初始化顺序问题：先设置参数，再应用分层功能，最后应用预设
     - 添加详细的初始化阶段日志，便于调试追踪
     - 增强参数验证和debugging功能，识别qty=1等异常参数值
@@ -19,7 +25,7 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.2.4-FixedInit"
+            self._version = "v2.2.5-EnhancedParams"
             self._tier = "混合开发版"
             self._description = (
                 "🔧 混合开发版DCA策略 - 开发调试专用\n"
@@ -153,11 +159,17 @@ class Strategy(StrategyBase):
             self.extreme_drawdown_pct = 50.0  # 极端回撤保护
             self.log_level = 0  # 简化日志
             
+            # 修复参数类型问题
+            if isinstance(getattr(self, 'basic_invest_only', False), int):
+                self.basic_invest_only = bool(self.basic_invest_only)
+                print(f"🔧 修正basic_invest_only类型: int -> bool({self.basic_invest_only})")
+            
             # 验证关键参数是否正确设置
             print(f"🔍 验证关键参数:")
             print(f"   qty: {getattr(self, 'qty', 'MISSING')} (期望: 20)")
-            print(f"   version_tier: {getattr(self, 'version_tier', 'MISSING')} (期望: 1)")
+            print(f"   version_tier: {getattr(self, 'version_tier', 'MISSING')} (期望: 1或2)")
             print(f"   preset_mode: {getattr(self, 'preset_mode', 'MISSING')} (期望: 2)")
+            print(f"   basic_invest_only: {getattr(self, 'basic_invest_only', 'MISSING')} (类型: {type(getattr(self, 'basic_invest_only', None))})"
             
             print(f"⚙️ 参数配置完成")
             print(f"🔍 打印全局变量参数值 (调试用):")
@@ -180,7 +192,7 @@ class Strategy(StrategyBase):
             print(f"⏱️ custom_interval_min (自定义间隔): {getattr(self, 'custom_interval_min', 'MISSING!')} [期望: 1440]")
             print(f"🎨 preset_mode (预设模式): {getattr(self, 'preset_mode', 'MISSING!')} [期望: 2]")
             print(f"🔧 backtest (回测模式): {getattr(self, 'backtest', 'MISSING!')} [期望: True]")
-            print(f"💡 basic_invest_only (仅定投): {getattr(self, 'basic_invest_only', 'MISSING!')} [期望: False]")
+            print(f"💡 basic_invest_only (仅定投): {getattr(self, 'basic_invest_only', 'MISSING!')} [期望: False, 类型: {type(getattr(self, 'basic_invest_only', None))}]")
             
             print(f"\n🔧 固定参数:")
             print(f"📊 drawdown_layers: {getattr(self, 'drawdown_layers', 'MISSING!')}")
@@ -578,7 +590,9 @@ class Strategy(StrategyBase):
             print(f"📢 回撤监控: 当前回撤{drawdown:.1f}%")
             
         # 纯定投模式或基础回撤保护
-        if self.basic_invest_only:
+        # 确保basic_invest_only是布尔值
+        basic_only = bool(getattr(self, 'basic_invest_only', False))
+        if basic_only:
             if self.should_invest(current_time):
                 self.execute_investment(latest_price, account_balance, self.qty, "基础定投")
         else:
