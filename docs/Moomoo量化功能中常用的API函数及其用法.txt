@@ -385,3 +385,259 @@ currency	Currency	计价货币	Currency.HKD	--
 available_fund(currency=Currency.HKD)
 示例返回值
 10000
+
+---
+
+### **期权相关函数**
+
+31. option_screener
+接口说明
+对标的证券的多条期权链进行筛选。
+适用市场
+香港市场：指数、股票、ETFs
+美国市场：股票、ETFs、指数
+option_screener(underlying_symbol, index_option_type=IndexOptionType.NORMAL, option_type=OptionType.CALL, moneyness=Moneyness.ITM, time_to_exp_start=0, time_to_exp_end=7, strike_to_spot_start=-0.1, strike_to_spot_end=0.1)
+参数
+参数名	类型	说明	默认值	范围
+underlying_symbol	Contract	标的证券	--	--
+index_option_type	IndexOptionType	指数期权类型	IndexOptionType.NORMAL	--
+option_type	OptionType	期权看涨/看跌类型	OptionType.CALL	--
+moneyness	Moneyness	期权价内/价外类型	Moneyness.ITM	--
+time_to_exp_start	int	距到期日剩余天数（范围起点）	0	--
+time_to_exp_end	int	距到期日剩余天数（范围终点）	7	--
+strike_to_spot_start	float	行权价距现价比例（范围下界）	-0.1	-0.8~1.2
+strike_to_spot_end	float	行权价距现价比例（范围上界）	0.1	-0.8~1.2
+返回
+返回类型： Contract
+
+示例说明
+筛选恒生指数的看涨价内期权（剩余期限为 0-7 天；行权价为 [标的现价的 -10.0% 到标的现价的 10%]）。
+option_screener(underlying_symbol=Contract("HK.800000"), index_option_type=IndexOptionType.NORMAL, option_type=OptionType.CALL, moneyness=Moneyness.ITM, time_to_exp_start=0, time_to_exp_end=7, strike_to_spot_start=-0.1, strike_to_spot_end=0.1)
+示例返回值
+Contract("HK.HSI230210C21200000")
+
+32. option_screener_by_date
+接口说明
+对标的证券指定到期日的期权链进行筛选。
+option_screener_by_date(underlying_symbol, index_option_type, option_type, moneyness, exp_date, strike_to_spot_start=-0.1, strike_to_spot_end=0.1)
+参数
+参数名	类型	说明	默认值	范围
+underlying_symbol	Contract	标的证券	--	--
+index_option_type	IndexOptionType	指数期权类型	--	--
+option_type	OptionType	期权看涨/看跌类型	--	--
+moneyness	Moneyness	期权价内/价外类型	--	--
+exp_date	string	到期日（YYYY-MM-DD）	--	--
+strike_to_spot_start	float	行权价距现价比例（范围下界）	-0.1	-0.8~1.2
+strike_to_spot_end	float	行权价距现价比例（范围上界）	0.1	-0.8~1.2
+返回
+返回类型： Contract
+
+示例说明
+筛选恒生指数的看涨价内期权（剩余期限：2023/02/10(3天)；行权价为 [标的现价的 -10.0% 到标的现价的 10%]）。
+option_screener_by_date(underlying_symbol=Contract("HK.800000"), index_option_type=IndexOptionType.NORMAL, option_type=OptionType.CALL, moneyness=Moneyness.ITM, exp_date="2023-02-10", strike_to_spot_start=-0.1, strike_to_spot_end=0.1)
+示例返回值
+Contract("HK.HSI230210C21200000")
+
+33. option_strike_price
+接口说明
+获取期权行权价。
+适用市场
+香港市场：期权
+美国市场：期权
+option_strike_price(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉的期权行权价。
+option_strike_price(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+262.5
+
+34. option_days_to_expiry
+接口说明
+获取期权距离到期日天数。
+适用市场
+香港市场：期权
+美国市场：期权
+option_days_to_expiry(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉期权的距离到期日天数。
+option_days_to_expiry(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+2
+
+35. option_class
+接口说明
+获取期权类型。
+适用市场
+香港市场：期权
+美国市场：期权
+option_class(symbol,option_class=OptionClass.Moneyness)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+option_class	OptionClass	分类方式	OptionClass.Moneyness	--
+返回
+返回类型： OptionCategory
+
+示例说明
+获取特斯拉的期权类型。
+option_class(symbol=Contract("US.TSLA230728C230000"),option_class=OptionClass.Moneyness)
+示例返回值
+OptionCategory.ITM
+
+获取特斯拉的期权类型。
+option_class(symbol=Contract("US.TSLA230728C230000"),option_class=OptionClass.Type)
+示例返回值
+OptionCategory.CALL
+
+获取特斯拉的期权类型。
+option_class(symbol=Contract("US.TSLA230728C230000"),option_class=OptionClass.Style)
+示例返回值
+OptionCategory.AMERICAN
+
+36. option_implied_volatility
+接口说明
+获取期权隐含波动率。
+适用市场
+香港市场：期权
+美国市场：期权
+option_implied_volatility(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉的期权隐含波动率。
+option_implied_volatility(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+0.924915057
+
+37. option_delta
+接口说明
+获取 期权希腊值 Delta。
+适用市场
+香港市场：期权
+美国市场：期权
+option_delta(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉的期权希腊值：Delta。
+option_delta(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+0.96723981
+
+38. option_gamma
+接口说明
+获取 期权希腊值 Gamma。
+适用市场
+香港市场：期权
+美国市场：期权
+option_gamma(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉的期权希腊值：Gamma。
+option_gamma(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+0.003473574
+
+39. option_vega
+接口说明
+获取 期权希腊值 vega。
+适用市场
+香港市场：期权
+美国市场：期权
+option_vega(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉的期权希腊值：vega。
+option_vega(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+0.016668531
+
+40. option_theta
+接口说明
+获取 期权希腊值 theta。
+适用市场
+香港市场：期权
+美国市场：期权
+option_theta(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉的期权希腊值：theta。
+option_theta(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+-0.250493102
+
+41. option_rho
+接口说明
+获取 期权希腊值 rho。
+适用市场
+香港市场：期权
+美国市场：期权
+option_rho(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取特斯拉的期权希腊值：rho。
+option_rho(symbol=Contract("US.TSLA230728C230000") )
+示例返回值
+0.016288324
+
+42. mid_price
+接口说明
+获取指定标的 bid 和 ask 的中间价。
+适用市场
+香港市场：股票、ETFs、窝轮、牛熊证、界内证、期权、期货
+美国市场：股票、ETFs、期权、期货
+A股市场：股票、ETFs
+新加坡市场：期货
+日本市场：期货
+mid_price(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型： float
+
+示例说明
+获取苹果的买卖盘中间价。
+mid_price(symbol=Contract("US.AAPL"))
+示例返回值
+151.945
