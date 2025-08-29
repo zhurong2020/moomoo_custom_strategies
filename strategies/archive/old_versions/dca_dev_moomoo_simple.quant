@@ -1,0 +1,459 @@
+class Strategy(StrategyBase):
+    """DCA定投策略 - Moomoo兼容版 v2.2.5"""
+
+    def initialize(self):
+        """初始化策略"""
+        try:
+            self._version = "v2.2.5-MoomooCompatible"
+            
+            print("🚀 开始初始化 {0}".format(self._version))
+            
+            # 核心状态变量
+            self.current_drawdown_layer = -1
+            self.last_investment_time = None
+            self.highest_price = None
+            self.last_valid_price = 100.0
+            self.strategy_start_price = None
+            self.drawdown_reset_threshold = 0.05
+            
+            # 回测支持变量
+            import collections
+            self.high_queue = collections.deque(maxlen=20)
+            self._position = 0
+            self._total_cost = 0.0
+            self.virtual_balance = None
+            
+            # 初始化组件
+            self.trigger_symbols()
+            self.custom_indicator()
+            self.global_variables()
+            self.setup_tier_features()
+            self.setup_presets()
+            
+            print("✅ 初始化完成")
+            self.print_welcome()
+            
+        except Exception as e:
+            print("❌ 初始化失败: {0}".format(str(e)))
+
+    def trigger_symbols(self):
+        """设置交易标的"""
+        try:
+            self.stock = declare_trig_symbol()
+            print("📈 交易标的: {0}".format(self.stock))
+        except Exception as e:
+            print("❌ 标的设置失败: {0}".format(str(e)))
+
+    def custom_indicator(self):
+        """注册自定义技术指标"""
+        try:
+            self.register_indicator(
+                indicator_name='MA',
+                script='MA5:MA(CLOSE,5),COLORFF8D1E;',
+                param_list=[]
+            )
+        except Exception as e:
+            print("❌ 技术指标注册失败: {0}".format(str(e)))
+
+    def global_variables(self):
+        """全局变量设置"""
+        try:
+            # === 基础参数 ===
+            self.qty = show_variable(20, GlobalType.INT)
+            self.preset_mode = show_variable(2, GlobalType.INT)
+            self.backtest = show_variable(True, GlobalType.BOOL)
+            self.basic_invest_only = show_variable(False, GlobalType.BOOL)
+            
+            # === 分层功能参数 ===
+            self.version_tier = show_variable(1, GlobalType.INT)  # 1=免费版 2=付费版
+            self.balance_mode = show_variable(1, GlobalType.INT)
+            self.custom_balance = show_variable(50000, GlobalType.INT)
+            self.interval_mode = show_variable(1, GlobalType.INT)
+            self.custom_interval_min = show_variable(1440, GlobalType.INT)
+            
+            # 固定参数
+            self.drawdown_layers = [5.0, 10.0, 20.0]
+            self.drawdown_multipliers = [1.5, 2.0, 3.0]
+            self.extreme_drawdown_pct = 50.0
+            self.log_level = 0
+            
+            print("⚙️ 参数配置完成")
+            
+        except Exception as e:
+            print("❌ 参数设置失败: {0}".format(str(e)))
+
+    def setup_presets(self):
+        """设置预设模板"""
+        try:
+            presets = {
+                1: {"name": "保守型", "description": "低风险", "base_qty": 10, "risk_level": "低"},
+                2: {"name": "平衡型", "description": "中等风险", "base_qty": None, "risk_level": "中"},
+                3: {"name": "积极型", "description": "高风险", "base_qty": 50, "risk_level": "高"}
+            }
+            
+            if self.preset_mode in presets:
+                preset = presets[self.preset_mode]
+                self.preset_name = preset["name"]
+                self.preset_desc = preset["description"]
+                self.risk_level = preset["risk_level"]
+                
+                # 应用预设数量（不能重新赋值show_variable变量）
+                if preset["base_qty"] is not None and self.qty == 20:
+                    print("📦 建议使用预设数量: {0}股 (当前: {1}股)".format(preset['base_qty'], self.qty))
+            else:
+                self.preset_name = "自定义"
+                self.preset_desc = "用户自定义参数"
+                self.risk_level = "中"
+                
+            print("🎨 预设配置: {0}".format(self.preset_name))
+            
+        except Exception as e:
+            print("❌ 预设配置失败: {0}".format(str(e)))
+            self.preset_name = "默认"
+            self.preset_desc = "系统默认配置"
+            self.risk_level = "中"
+
+    def setup_tier_features(self):
+        """设置分层功能特性"""
+        try:
+            # 资金管理设置
+            if self.version_tier >= 2 and self.balance_mode == 2:
+                if self.backtest:
+                    self.initial_balance = self.custom_balance
+                    self.virtual_balance = self.custom_balance
+                print("💰 使用自定义资金: ${0:,}".format(self.custom_balance))
+            else:
+                if self.backtest:
+                    try:
+                        self.initial_balance = total_cash(currency=Currency.USD)
+                        if self.initial_balance is None or self.initial_balance <= 0:
+                            self.initial_balance = 10000.0
+                        self.virtual_balance = self.initial_balance
+                    except:
+                        self.initial_balance = 10000.0
+                        self.virtual_balance = 10000.0
+                        print("⚠️ 使用默认资金$10,000")
+                
+            # 投资周期设置
+            if self.interval_mode == 1:  # 自动模式
+                if self.version_tier == 1:
+                    self.interval_min = 10080  # 每周
+                    self.interval_desc = "每周定投 (免费版)"
+                else:
+                    self.interval_min = 1440  # 每日
+                    self.interval_desc = "每日定投 (付费版)"
+            elif self.interval_mode == 2:  # 每日
+                if self.version_tier >= 2:
+                    self.interval_min = 1440
+                    self.interval_desc = "每日定投"
+                else:
+                    print("💡 每日定投为付费版功能")
+                    self.interval_min = 10080
+                    self.interval_desc = "每周定投 (免费版限制)"
+            elif self.interval_mode == 3:  # 每周
+                self.interval_min = 10080
+                self.interval_desc = "每周定投"
+            elif self.interval_mode == 4:  # 自定义
+                if self.version_tier >= 2:
+                    self.interval_min = self.custom_interval_min
+                    self.interval_desc = "自定义周期 ({0}分钟)".format(self.interval_min)
+                else:
+                    print("💡 自定义周期为付费版功能")
+                    self.interval_min = 10080
+                    self.interval_desc = "每周定投 (免费版限制)"
+            
+            print("📅 投资周期: {0}".format(self.interval_desc))
+            
+        except Exception as e:
+            print("❌ 分层功能设置失败: {0}".format(str(e)))
+            self.interval_min = 10080 if getattr(self, 'version_tier', 1) == 1 else 1440
+            self.interval_desc = "默认周期 ({0}分钟)".format(self.interval_min)
+            if not hasattr(self, 'virtual_balance') or self.virtual_balance is None:
+                self.virtual_balance = 10000.0
+                self.initial_balance = 10000.0
+
+    def print_welcome(self):
+        """打印欢迎信息"""
+        version_info = {
+            1: {"name": "免费基础版", "features": "固定定投+风险提醒", "color": "🆓"},
+            2: {"name": "付费进阶版(¥35/月)", "features": "智能加仓系统", "color": "💎"}
+        }
+        
+        current_version = version_info.get(self.version_tier, version_info[1])
+        
+        print("="*60)
+        print("🚀 DCA智能定投策略 {0}".format(self._version))
+        print("="*60)
+        print("{0} 当前版本: {1}".format(current_version['color'], current_version['name']))
+        print("✨ 核心功能: {0}".format(current_version['features']))
+        
+        print("\n📊 当前配置:")
+        print("   版本等级: {0} ({1})".format(self.version_tier, '免费版' if self.version_tier == 1 else '付费版'))
+        print("   投资模板: {0}".format(self.preset_name))
+        print("   定投数量: {0}股".format(self.qty))
+        print("   投资周期: {0}".format(getattr(self, 'interval_desc', '未知')))
+        if hasattr(self, 'virtual_balance'):
+            print("   初始资金: ${0:,.0f}".format(self.virtual_balance))
+        print("   运行模式: {0}".format('回测' if self.backtest else '实盘'))
+        
+        if self.version_tier == 1:
+            print("\n🎯 升级提示:")
+            print("   💡 付费版支持每日定投，平滑成本")
+            print("   💡 付费版支持智能加仓，提升收益")
+            print("   💰 联系作者升级至付费版(¥35/月)")
+        
+        print("="*60 + "\n")
+
+    def handle_data(self):
+        """主要交易逻辑"""
+        try:
+            current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+            latest_price, highest_price, account_balance = self.get_market_data()
+            
+            drawdown = self.calculate_drawdown(latest_price)
+            
+            # 分层功能路由
+            if self.version_tier == 1:
+                self.free_version_logic(current_time, latest_price, account_balance, drawdown)
+            elif self.version_tier == 2:
+                self.advanced_version_logic(current_time, latest_price, account_balance, drawdown)
+            else:
+                print("⚠️ 版本参数错误，使用免费版功能")
+                self.free_version_logic(current_time, latest_price, account_balance, drawdown)
+
+        except Exception as e:
+            print("❌ 策略执行错误: {0}".format(str(e)))
+
+    def get_market_data(self):
+        """获取市场数据"""
+        if self.backtest:
+            try:
+                if not hasattr(self, 'bar_index'):
+                    self.bar_index = 0
+                self.bar_index += 1
+                
+                latest_price = bar_close(self.stock, bar_type=BarType.D1, select=1)
+                if latest_price is None or latest_price <= 0:
+                    latest_price = 100.0
+                
+                if latest_price > 0:
+                    self.last_valid_price = latest_price
+                
+                self.high_queue.append(latest_price)
+                
+                # 计算最高价
+                available_days = self.bar_index if self.bar_index < 20 else 20
+                high_list = list(self.high_queue)[-available_days:]
+                if len(high_list) == 0:
+                    highest_price = latest_price
+                else:
+                    highest_price = high_list[0]
+                    for price in high_list[1:]:
+                        if price > highest_price:
+                            highest_price = price
+                
+                account_balance = self.virtual_balance
+                return latest_price, highest_price, account_balance
+            except Exception as e:
+                print("回测数据获取错误: {0}".format(str(e)))
+                default_balance = getattr(self, 'virtual_balance', 10000.0) or 10000.0
+                return self.last_valid_price, self.last_valid_price, default_balance
+        else:
+            # 实盘模式
+            latest_price = current_price(self.stock, price_type=THType.FTH)
+            if latest_price is None or latest_price <= 0:
+                latest_price = self.last_valid_price
+            else:
+                self.last_valid_price = latest_price
+            
+            high_list = [bar_high(self.stock, bar_type=BarType.D1, select=i) for i in range(1, 21)]
+            valid_highs = [h for h in high_list if h is not None and h > 0]
+            if len(valid_highs) == 0:
+                highest_price = latest_price
+            else:
+                highest_price = valid_highs[0]
+                for price in valid_highs[1:]:
+                    if price > highest_price:
+                        highest_price = price
+            
+            account_balance = total_cash(currency=Currency.USD)
+            return latest_price, highest_price, account_balance
+
+    def calculate_drawdown(self, latest_price):
+        """计算回撤幅度"""
+        if self.strategy_start_price is None:
+            self.strategy_start_price = latest_price
+            self.highest_price = latest_price
+            return 0.0
+            
+        if latest_price > self.highest_price:
+            self.highest_price = latest_price
+            if (latest_price - self.highest_price) / self.highest_price > self.drawdown_reset_threshold:
+                self.current_drawdown_layer = -1
+        
+        if self.highest_price > 0:
+            drawdown = (self.highest_price - latest_price) / self.highest_price * 100
+        else:
+            drawdown = 0.0
+            
+        return drawdown
+
+    def calculate_add_position_qty(self, drawdown):
+        """计算加仓数量"""
+        for i, threshold in enumerate(self.drawdown_layers):
+            if drawdown >= threshold:
+                if i <= self.current_drawdown_layer:
+                    continue
+                    
+                self.current_drawdown_layer = i
+                add_qty = int(self.qty * self.drawdown_multipliers[i])
+                
+                print("🎯 回撤加仓触发: 第{0}层 ({1}%), 数量={2}股".format(i+1, threshold, add_qty))
+                return add_qty
+        
+        return 0
+
+    def should_invest(self, current_time):
+        """判断是否应该定投"""
+        if self.last_investment_time is None:
+            return True
+        elapsed = (current_time - self.last_investment_time).total_seconds() / 60
+        
+        if not hasattr(self, 'interval_min') or self.interval_min is None:
+            default_interval = 10080 if getattr(self, 'version_tier', 1) == 1 else 1440
+            self.interval_min = default_interval
+        
+        return elapsed >= self.interval_min
+
+    def free_version_logic(self, current_time, latest_price, account_balance, drawdown):
+        """免费版策略逻辑"""
+        
+        # 风险提醒功能
+        if drawdown >= 20.0:
+            print("⚠️ 免费版风险提醒: 当前回撤{0:.1f}%".format(drawdown))
+        elif drawdown >= 10.0:
+            print("📢 回撤监控: 当前回撤{0:.1f}%".format(drawdown))
+            
+        # 定投逻辑
+        basic_only = bool(getattr(self, 'basic_invest_only', False))
+        if basic_only or True:  # 免费版只做定投
+            if self.should_invest(current_time):
+                self.execute_investment(latest_price, account_balance, self.qty, "基础定投")
+
+    def advanced_version_logic(self, current_time, latest_price, account_balance, drawdown):
+        """付费版策略逻辑"""
+        
+        if self.version_tier != 2:
+            print("💡 智能加仓功能需要升级到付费版(¥35/月)")
+            return self.free_version_logic(current_time, latest_price, account_balance, drawdown)
+        
+        # 极端回撤保护
+        if drawdown >= self.extreme_drawdown_pct:
+            print("🚨 极端回撤保护: {0:.1f}%，仅定投模式".format(drawdown))
+            if self.should_invest(current_time):
+                self.execute_investment(latest_price, account_balance, self.qty, "极端回撤保护")
+            return
+
+        # 智能加仓系统
+        add_qty = self.calculate_add_position_qty(drawdown)
+        if add_qty > 0:
+            self.execute_investment(latest_price, account_balance, add_qty, "付费版-智能加仓")
+            return
+
+        # 常规定投
+        if self.should_invest(current_time):
+            self.execute_investment(latest_price, account_balance, self.qty, "付费版-定期定投")
+
+    def execute_investment(self, latest_price, account_balance, quantity, trade_type="定投"):
+        """执行投资"""
+        
+        # 参数检查
+        if self.version_tier == 2:
+            if quantity < 1 or quantity > 1000:
+                print("⚠️ 付费版参数修正: 投资数量 {0} -> {1}股".format(quantity, self.qty))
+                quantity = self.qty
+        else:
+            if quantity < 10 or quantity > 100 or quantity % 10 != 0:
+                print("⚠️ 免费版参数修正: 投资数量 {0} -> 20股".format(quantity))
+                quantity = 20
+
+        if self.backtest:
+            # 回测模式
+            required_cash = quantity * latest_price
+            
+            if self.virtual_balance is None:
+                self.virtual_balance = 10000.0
+            
+            if required_cash > self.virtual_balance:
+                max_qty = int(self.virtual_balance // latest_price)
+                if max_qty < 1:
+                    print("💰 虚拟余额不足")
+                    return
+                quantity = max_qty
+                required_cash = quantity * latest_price
+                print("⚠️ 资金调整: 调整为{0}股".format(quantity))
+            
+            if quantity < 1:
+                print("💰 调整后数量不足1股")
+                return
+
+            # 下单
+            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            
+            print("📊 {0}: {1}股 @ ${2:.2f}".format(trade_type, quantity, latest_price))
+            
+            # 更新账户
+            self.virtual_balance -= required_cash
+            self._total_cost += required_cash
+            self._position += quantity
+            
+            print("💰 余额: ${0:.2f} | 持仓: {1}股".format(self.virtual_balance, self._position))
+            
+        else:
+            # 实盘模式
+            required_cash = quantity * latest_price
+            if required_cash > account_balance:
+                max_qty = int((account_balance // latest_price) // 10 * 10)
+                if max_qty < 10:
+                    print("💰 资金不足，无法投资")
+                    return
+                quantity = max_qty
+                print("⚠️ 资金调整: 投资数量调整为 {0}股".format(quantity))
+
+            try:
+                order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+                print("✅ {0}订单: {1}股 @ 市价, 订单号: {2}".format(trade_type, quantity, order_id))
+            except Exception as e:
+                print("❌ 下单失败: {0}".format(str(e)))
+                return
+
+        self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+
+    def get_position(self):
+        """获取持仓数量"""
+        if self.backtest:
+            return self._position
+        try:
+            return position_holding_qty(self.stock)
+        except:
+            return 0
+
+    def get_total_cost(self):
+        """获取总成本"""
+        if self.backtest:
+            return self._total_cost
+        try:
+            pos = position_holding_qty(self.stock)
+            avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+            return pos * avg_cost
+        except:
+            return 0.0
+
+    def get_avg_cost(self):
+        """获取平均成本"""
+        if self.backtest:
+            return self._total_cost / self._position if self._position > 0 else 0.0
+        try:
+            return position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+        except:
+            return 0.0
