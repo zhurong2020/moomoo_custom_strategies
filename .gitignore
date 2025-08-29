@@ -130,3 +130,8 @@ customer_list/
 subscription_data/
 payment_records/
 user_analytics/
+
+# Test-generated files and temporary data
+data/*test_report*.json
+data/tsla_price_*.csv
+tools/test_*.py
