@@ -1,0 +1,113 @@
+{
+  "free_version": {
+    "parameters": {
+      "version_tier": 1,
+      "interval_min": 10080,
+      "qty_range": [
+        10,
+        100
+      ],
+      "qty_multiple": 10,
+      "has_smart_add": false,
+      "has_daily_invest": false
+    },
+    "qty_validation_test": {
+      "input": [
+        5,
+        15,
+        25,
+        105,
+        200
+      ],
+      "output": [
+        10,
+        10,
+        20,
+        100,
+        100
+      ],
+      "passed": true
+    },
+    "expected_behavior": {
+      "investment_frequency": "每周一次",
+      "smart_rebalancing": "仅回撤提醒，不加仓",
+      "parameter_flexibility": "受限制",
+      "upgrade_hints": "显示付费版价值"
+    }
+  },
+  "premium_version": {
+    "license_validation": {
+      "valid": true,
+      "tier": 2,
+      "description": "测试付费版"
+    },
+    "parameters": {
+      "version_tier": 2,
+      "interval_min": 1440,
+      "qty_range": [
+        1,
+        200
+      ],
+      "qty_multiple": 1,
+      "has_smart_add": true,
+      "drawdown_layers": [
+        10.0,
+        20.0
+      ],
+      "drawdown_multipliers": [
+        1.5,
+        2.0
+      ],
+      "extreme_protection": 50.0
+    },
+    "add_position_test": {
+      "input_drawdowns": [
+        5.0,
+        12.0,
+        25.0,
+        55.0
+      ],
+      "output_actions": [
+        "正常定投",
+        "1.5倍加仓 (1.5x)",
+        "2倍加仓 (2.0x)",
+        "仅定投模式"
+      ],
+      "passed": true
+    },
+    "expected_behavior": {
+      "investment_frequency": "每日一次",
+      "smart_rebalancing": "2层智能加仓",
+      "parameter_flexibility": "高度灵活",
+      "protection_level": "极端回撤保护"
+    }
+  },
+  "comparison": {
+    "investment_frequency": {
+      "free": "每周 (10080分钟)",
+      "premium": "每日 (1440分钟)",
+      "advantage": "付费版频次高7倍，成本平滑效果更好"
+    },
+    "smart_features": {
+      "free": "仅回撤提醒",
+      "premium": "2层智能加仓 (10%/20% → 1.5x/2x)",
+      "advantage": "付费版在回撤时自动增投，降低平均成本"
+    },
+    "parameter_flexibility": {
+      "free": "10-100股，10的倍数",
+      "premium": "1-200股，任意数量",
+      "advantage": "付费版投资量更灵活，适应不同资金规模"
+    },
+    "risk_protection": {
+      "free": "基础风险提醒",
+      "premium": "极端回撤保护 (50%+切换仅定投)",
+      "advantage": "付费版有完整的风险控制体系"
+    },
+    "expected_performance": {
+      "free": "基准DCA收益",
+      "premium": "预期比免费版多4.1%年化收益",
+      "advantage": "历史数据显示付费版明显优势"
+    }
+  },
+  "timestamp": "2025-08-29T08:45:42.988358"
+}
