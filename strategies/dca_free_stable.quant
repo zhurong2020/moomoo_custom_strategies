@@ -1,10 +1,10 @@
 class Strategy(StrategyBase):
-    """DCA定投策略 - 统一开发版 v2.7.0"""
+    """DCA定投策略 - 统一开发版 v2.8.0"""
 
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.7.0-MainDev"
+            self._version = "v2.8.0-MainDev"
             
             print("🚀 开始初始化 {0}".format(self._version))
             
@@ -78,6 +78,9 @@ class Strategy(StrategyBase):
             
             # === v2.4.0 新增: 激进乘数系统 ===
             self.aggressive_multiplier = show_variable(1.0, GlobalType.FLOAT)  # 1.0-2.5倍乘数
+            
+            # === v2.8.0 新增: 数据收集模式 ===  
+            self.data_collection_mode = show_variable(0, GlobalType.INT)  # 0=正常 1=纯数据收集
             
             # 基础固定参数 - v2.5.0扩展支持
             # 免费版: 3层, 付费版: 5层
@@ -349,6 +352,18 @@ class Strategy(StrategyBase):
             print("   💎 付费版支持完整5层智能加仓系统")
             print("   ⚡ 激进乘数最高2.5x，长期收益更优")
             print("   💰 联系作者升级至付费版(¥35/月)")
+        else:
+            # 付费版显示数据收集模式说明
+            if getattr(self, 'data_collection_mode', 0) == 1:
+                print("\n🔍 数据收集模式已启用:")
+                print("   📊 纯粹每日定投 - 无任何复杂计算和判断")
+                print("   ⚡ 专为快速获取长期历史数据设计")
+                print("   📈 每日无条件投资{0}股，适合1年+回测".format(self.effective_qty))
+                print("   🚀 高速数据收集，无策略逻辑干扰")
+            else:
+                print("\n💎 付费版高级功能:")
+                print("   🔍 数据收集模式: 设置data_collection_mode=1启用")
+                print("   📊 纯每日定投模式，专为获取历史数据设计")
         
         print("="*60 + "\n")
 
@@ -594,6 +609,10 @@ class Strategy(StrategyBase):
             print("💡 智能加仓功能需要升级到付费版(¥35/月)")
             return self.free_version_logic(current_time, latest_price, account_balance, drawdown)
         
+        # v2.8.0新增: 数据收集模式 - 纯粹的每日定投，无任何判断逻辑
+        if getattr(self, 'data_collection_mode', 0) == 1:
+            return self.data_collection_mode_logic(current_time, latest_price, account_balance)
+        
         # 极端回撤保护
         if drawdown >= self.extreme_drawdown_pct:
             print("🚨 极端回撤保护: {0:.1f}%，仅定投模式".format(drawdown))
@@ -610,6 +629,35 @@ class Strategy(StrategyBase):
         # 常规定投
         if self.should_invest(current_time):
             self.execute_investment(latest_price, account_balance, self.effective_qty, "付费版-定期定投")
+    
+    def data_collection_mode_logic(self, current_time, latest_price, account_balance):
+        """数据收集模式 - v2.8.0新增: 纯粹每日定投，专为获取历史数据设计"""
+        
+        # 简单日志输出，记录关键数据
+        if hasattr(self, 'bar_index'):
+            bar_count = self.bar_index
+        else:
+            bar_count = getattr(self, '_data_collection_day_count', 0)
+            self._data_collection_day_count = bar_count + 1
+        
+        # 每10天输出一次进度 
+        if bar_count % 10 == 0:
+            total_position = self.get_position()
+            total_cost = self.get_total_cost()
+            avg_cost = total_cost / total_position if total_position > 0 else 0
+            current_value = total_position * latest_price
+            
+            print("📊 数据收集第{0}天: 价格=${1:.2f} | 持仓{2}股 | 成本${3:.2f} | 价值${4:,.0f}".format(
+                bar_count, latest_price, total_position, avg_cost, current_value))
+        
+        # 纯粹的每日定投 - 无任何条件判断
+        self.execute_investment(latest_price, account_balance, self.effective_qty, "数据收集模式")
+        
+        # 记录数据收集状态
+        if not hasattr(self, '_data_collection_started'):
+            self._data_collection_started = True
+            print("🔍 数据收集模式已启动 - 每日无条件投资{0}股".format(self.effective_qty))
+            print("📈 此模式专为快速获取长期历史数据设计，无任何复杂逻辑")
 
     def execute_investment(self, latest_price, account_balance, quantity, trade_type="定投"):
         """执行投资 - v2.7.0重构统一版"""
