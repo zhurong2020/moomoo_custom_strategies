@@ -4,13 +4,14 @@ class Strategy(StrategyBase):
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.3.8-MainDev"
+            self._version = "v2.4.0-MainDev"
             
             print("🚀 开始初始化 {0}".format(self._version))
             
             # 核心状态变量
             self.last_investment_time = None
-            self.highest_price = None
+            self.highest_price = None  # 兼容性保留
+            self.run_highest_price = None  # 新的运行时最高价
             self.last_valid_price = 100.0
             self.strategy_start_price = None
             self.drawdown_reset_threshold = 0.05
@@ -30,6 +31,9 @@ class Strategy(StrategyBase):
             self.global_variables()
             self.setup_presets()  # 预设设置先执行，设定effective_qty
             self.setup_tier_features()  # 分层功能后执行，依赖effective_qty
+            
+            # v2.4.0 新增: 初始化历史最高价基准
+            self.initialize_highest_price_baseline()
             
             print("✅ 初始化完成")
             self.print_welcome()
@@ -72,11 +76,17 @@ class Strategy(StrategyBase):
             self.interval_mode = show_variable(1, GlobalType.INT)  # 自动模式
             self.custom_interval_min = show_variable(1440, GlobalType.INT)
             
-            # 固定参数
+            # === v2.4.0 新增: 激进乘数系统 ===
+            self.aggressive_multiplier = show_variable(1.0, GlobalType.FLOAT)  # 1.0-2.5倍乘数
+            
+            # 基础固定参数
             self.drawdown_layers = [5.0, 10.0, 20.0]
-            self.drawdown_multipliers = [1.5, 2.0, 3.0]
+            self.base_multipliers = [1.5, 2.0, 3.0]  # 基础倍数
             self.extreme_drawdown_pct = 50.0
             self.log_level = 0
+            
+            # 动态计算最终倍数 - 在setup_tier_features()中设置
+            self.drawdown_multipliers = self.base_multipliers  # 默认值
             
             print("⚙️ 参数配置完成")
             
@@ -192,6 +202,9 @@ class Strategy(StrategyBase):
             
             print("📅 投资周期: {0}".format(self.interval_desc))
             
+            # v2.4.0 新增: 设置激进乘数系统
+            self.setup_aggressive_multiplier_system()
+            
         except Exception as e:
             print("❌ 分层功能设置失败: {0}".format(str(e)))
             self.interval_min = 10080 if getattr(self, 'version_tier', 1) == 1 else 1440
@@ -199,6 +212,85 @@ class Strategy(StrategyBase):
             if not hasattr(self, 'virtual_balance') or self.virtual_balance is None:
                 self.virtual_balance = 10000.0
                 self.initial_balance = 10000.0
+
+    def initialize_highest_price_baseline(self):
+        """初始化历史最高价基准 - v2.4.0新增"""
+        try:
+            print("📈 正在初始化历史最高价基准...")
+            
+            # 使用bar_custom API获取过去200个交易日的最高价
+            historical_high = bar_custom(
+                symbol=self.stock,
+                data_type=BarDataType.HIGH,
+                custom_num=200,  # 约200个交易日（约1年）
+                custom_type=CustomType.D1,
+                select=1
+            )
+            
+            if historical_high and historical_high > 0:
+                self.run_highest_price = historical_high
+                print("✅ 历史最高价基准: ${0:.2f} (200日内)".format(historical_high))
+            else:
+                # 如果无法获取历史数据，使用当前价格
+                current_price_val = current_price(self.stock, price_type=THType.FTH)
+                if current_price_val and current_price_val > 0:
+                    self.run_highest_price = current_price_val
+                else:
+                    self.run_highest_price = self.last_valid_price
+                print("⚠️ 无法获取历史数据，使用当前价格: ${0:.2f}".format(self.run_highest_price))
+            
+            # 兼容性设置
+            self.highest_price = self.run_highest_price
+            
+        except Exception as e:
+            print("❌ 历史最高价初始化失败: {0}".format(str(e)))
+            # 回退到当前价格
+            self.run_highest_price = self.last_valid_price
+            self.highest_price = self.run_highest_price
+            print("🔧 使用默认值: ${0:.2f}".format(self.run_highest_price))
+
+    def setup_aggressive_multiplier_system(self):
+        """设置激进乘数系统 - v2.4.0新增"""
+        try:
+            print("🎯 正在设置激进乘数系统...")
+            
+            # 根据版本层级设置乘数限制
+            if self.version_tier == 1:
+                # 免费版：固定标准倍数
+                self.aggressive_multiplier = 1.0
+                print("🆓 免费版: 使用标准乘数 1.0x")
+            elif self.version_tier == 2:
+                # 付费版：允许激进乘数 1.0-2.5
+                multiplier_input = getattr(self, 'aggressive_multiplier', 1.0)
+                if multiplier_input < 1.0:
+                    self.aggressive_multiplier = 1.0
+                    print("⚠️ 乘数不能小于1.0，设置为1.0x")
+                elif multiplier_input > 2.5:
+                    self.aggressive_multiplier = 2.5
+                    print("⚠️ 乘数不能超过2.5，设置为2.5x")
+                else:
+                    self.aggressive_multiplier = multiplier_input
+                
+                print("💰 付费版: 使用激进乘数 {0}x".format(self.aggressive_multiplier))
+            
+            # 计算最终倍数
+            self.drawdown_multipliers = [
+                m * self.aggressive_multiplier for m in self.base_multipliers
+            ]
+            
+            print("📋 基础倍数: {0}".format(self.base_multipliers))
+            print("🚀 最终倍数: {0}".format(["{0:.1f}x".format(m) for m in self.drawdown_multipliers]))
+            
+            # 显示层级和倍数对应关系
+            for i, (layer, multiplier) in enumerate(zip(self.drawdown_layers, self.drawdown_multipliers)):
+                print("   第{0}层: {1}%回撤 → {2:.1f}倍加仓".format(i+1, layer, multiplier))
+            
+        except Exception as e:
+            print("❌ 激进乘数设置失败: {0}".format(str(e)))
+            # 回退到标准倍数
+            self.aggressive_multiplier = 1.0
+            self.drawdown_multipliers = self.base_multipliers
+            print("🔧 使用标准倍数")
 
     def print_welcome(self):
         """打印欢迎信息"""
@@ -230,6 +322,15 @@ class Strategy(StrategyBase):
             print("   预估投资: 约{0}天 (保守{1}天，预留加仓资金)".format(estimated_days, conservative_days))
         print("   运行模式: {0}".format('回测' if self.backtest else '实盘'))
         
+        # v2.4.0 新增：显示激进乘数系统
+        if hasattr(self, 'run_highest_price'):
+            print("   历史最高价: ${0:.2f}".format(self.run_highest_price))
+        if hasattr(self, 'aggressive_multiplier'):
+            print("   激进乘数: {0}x".format(self.aggressive_multiplier))
+        if hasattr(self, 'drawdown_multipliers'):
+            print("   回撤层级: {0}".format(self.drawdown_layers))
+            print("   加仓倍数: {0}".format(["{0:.1f}x".format(m) for m in self.drawdown_multipliers]))
+        
         if self.version_tier == 1:
             print("\n🎯 升级提示:")
             print("   💡 付费版支持智能频率调整")
@@ -242,7 +343,7 @@ class Strategy(StrategyBase):
         """主要交易逻辑"""
         try:
             current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
-            latest_price, highest_price, account_balance = self.get_market_data()
+            latest_price, account_balance = self.get_market_data()
             
             drawdown = self.calculate_drawdown(latest_price)
             
@@ -264,7 +365,7 @@ class Strategy(StrategyBase):
             print("❌ 策略执行错误: {0}".format(str(e)))
 
     def get_market_data(self):
-        """获取市场数据"""
+        """获取市场数据 - v2.4.0简化版"""
         if self.backtest:
             try:
                 if not hasattr(self, 'bar_index'):
@@ -275,30 +376,17 @@ class Strategy(StrategyBase):
                 if latest_price is None or latest_price <= 0:
                     latest_price = 100.0
                 
-                # 简化价格处理
-                
+                # 更新有效价格
                 if latest_price > 0:
                     self.last_valid_price = latest_price
                 
-                self.high_queue.append(latest_price)
-                
-                # 计算最高价
-                available_days = self.bar_index if self.bar_index < 20 else 20
-                high_list = list(self.high_queue)[-available_days:]
-                if len(high_list) == 0:
-                    highest_price = latest_price
-                else:
-                    highest_price = high_list[0]
-                    for price in high_list[1:]:
-                        if price > highest_price:
-                            highest_price = price
-                
                 account_balance = self.virtual_balance
-                return latest_price, highest_price, account_balance
+                return latest_price, account_balance
+                
             except Exception as e:
                 print("回测数据获取错误: {0}".format(str(e)))
                 default_balance = getattr(self, 'virtual_balance', 10000.0) or 10000.0
-                return self.last_valid_price, self.last_valid_price, default_balance
+                return self.last_valid_price, default_balance
         else:
             # 实盘模式
             latest_price = current_price(self.stock, price_type=THType.FTH)
@@ -307,33 +395,32 @@ class Strategy(StrategyBase):
             else:
                 self.last_valid_price = latest_price
             
-            high_list = [bar_high(self.stock, bar_type=BarType.D1, select=i) for i in range(1, 21)]
-            valid_highs = [h for h in high_list if h is not None and h > 0]
-            if len(valid_highs) == 0:
-                highest_price = latest_price
-            else:
-                highest_price = valid_highs[0]
-                for price in valid_highs[1:]:
-                    if price > highest_price:
-                        highest_price = price
-            
             account_balance = total_cash(currency=Currency.USD)
-            return latest_price, highest_price, account_balance
+            return latest_price, account_balance
 
     def calculate_drawdown(self, latest_price):
-        """计算回撤幅度"""
-        if self.strategy_start_price is None:
-            self.strategy_start_price = latest_price
-            self.highest_price = latest_price
-            return 0.0
+        """计算回撤幅度 - v2.4.0修复版"""
+        # 初始化检查
+        if not hasattr(self, 'run_highest_price') or self.run_highest_price is None:
+            self.run_highest_price = latest_price
+            print("⚠️ 运行时初始化最高价: ${0:.2f}".format(latest_price))
             
-        if latest_price > self.highest_price:
-            self.highest_price = latest_price
-            if (latest_price - self.highest_price) / self.highest_price > self.drawdown_reset_threshold:
+        # 实时更新运行时最高价
+        if latest_price > self.run_highest_price:
+            old_high = self.run_highest_price
+            self.run_highest_price = latest_price
+            print("📈 创新高: ${0:.2f} → ${1:.2f}".format(old_high, latest_price))
+            
+            # 价格创新高时重置回撤层级
+            if hasattr(self, 'current_drawdown_layer'):
                 self.current_drawdown_layer = -1
         
-        if self.highest_price > 0:
-            drawdown = (self.highest_price - latest_price) / self.highest_price * 100
+        # 兼容性更新旧的highest_price
+        self.highest_price = self.run_highest_price
+        
+        # 计算准确回撤
+        if self.run_highest_price > 0:
+            drawdown = (self.run_highest_price - latest_price) / self.run_highest_price * 100
         else:
             drawdown = 0.0
             
