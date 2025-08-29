@@ -1,10 +1,10 @@
 class Strategy(StrategyBase):
-    """DCA定投策略 - 统一开发版 v2.3.0"""
+    """DCA定投策略 - 统一开发版 v2.5.0"""
 
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.4.0-MainDev"
+            self._version = "v2.5.0-MainDev"
             
             print("🚀 开始初始化 {0}".format(self._version))
             
@@ -79,10 +79,16 @@ class Strategy(StrategyBase):
             # === v2.4.0 新增: 激进乘数系统 ===
             self.aggressive_multiplier = show_variable(1.0, GlobalType.FLOAT)  # 1.0-2.5倍乘数
             
-            # 基础固定参数
-            self.drawdown_layers = [5.0, 10.0, 20.0]
-            self.base_multipliers = [1.5, 2.0, 3.0]  # 基础倍数
-            self.extreme_drawdown_pct = 50.0
+            # 基础固定参数 - v2.5.0扩展支持
+            # 免费版: 3层, 付费版: 5层
+            if self.version_tier == 1:
+                self.drawdown_layers = [5.0, 10.0, 20.0]
+                self.base_multipliers = [1.5, 2.0, 3.0]
+            else:  # self.version_tier == 2 (付费版)
+                self.drawdown_layers = [5.0, 10.0, 20.0, 35.0, 50.0] 
+                self.base_multipliers = [1.5, 2.0, 3.0, 4.0, 5.0]
+            
+            self.extreme_drawdown_pct = 60.0  # 超过最高层的极端回撤阈值
             self.log_level = 0
             
             # 动态计算最终倍数 - 在setup_tier_features()中设置
@@ -427,13 +433,27 @@ class Strategy(StrategyBase):
         return drawdown
 
     def calculate_add_position_qty(self, drawdown):
-        """计算加仓数量 - 激进抄底策略"""
-        for i, threshold in enumerate(self.drawdown_layers):
+        """计算加仓数量 - v2.4.1修复版：从高层级往低层级检查"""
+        # v2.5.0新增: 检查是否超出最高层级的极端回撤
+        max_layer_threshold = self.drawdown_layers[-1]
+        if drawdown > max_layer_threshold and drawdown >= self.extreme_drawdown_pct:
+            if not hasattr(self, '_extreme_drawdown_warned'):
+                print("🚨 极端回撤警告: 当前回撤{0:.1f}%超过第{1}层({2}%)".format(
+                    drawdown, len(self.drawdown_layers), max_layer_threshold))
+                print("📱 建议考虑VIP App的高级回撤管理功能")
+                self._extreme_drawdown_warned = True
+        
+        # v2.4.1 修复: 从最高层级开始检查（从后往前遍历）
+        for i in reversed(range(len(self.drawdown_layers))):
+            threshold = self.drawdown_layers[i]
             if drawdown >= threshold:
-                # 移除层级限制 - 每次达到阈值都加仓
+                # 激进抄底策略 - 选择最适合的层级
                 add_qty = int(self.effective_qty * self.drawdown_multipliers[i])
                 
-                print("🎯 回撤加仓触发: 第{0}层 ({1}%), 数量={2}股 (激进抄底)".format(i+1, threshold, add_qty))
+                print("🎯 回撤加仓触发: 第{0}层 ({1}%), 实际回撤{2:.1f}%, 数量={3}股".format(
+                    i+1, threshold, drawdown, add_qty))
+                print("💰 乘数详情: 基础{0}股 × {1:.1f}倍 = {2}股".format(
+                    self.effective_qty, self.drawdown_multipliers[i], add_qty))
                 
                 # 显示VIP功能引导
                 if i >= 1:  # 第2层及以上显示VIP升级提示
