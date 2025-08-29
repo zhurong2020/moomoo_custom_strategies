@@ -104,3 +104,24 @@ api_keys.txt
 .scratch/
 debug_*
 test_personal_*
+
+# Commercial strategy files and paid tier code
+strategies/*premium*.quant
+strategies/*paid*.quant
+strategies/*pro*.quant
+strategies/*vip*.quant
+strategies/dca_premium_v2.quant
+strategies/dca_advanced_v2.quant
+
+# Paid tier documentation and specifications
+docs/*premium*.md
+docs/*paid*.md
+docs/*pro*.md
+docs/tier_specifications.md
+docs/subscription_model.md
+
+# Customer and subscription data
+customer_list/
+subscription_data/
+payment_records/
+user_analytics/

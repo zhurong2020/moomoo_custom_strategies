@@ -2,18 +2,20 @@
 
 ## 📁 Project Organization
 
-### `/strategies/` - Core Strategy Files
+### `/strategies/` - Core Strategy Files (阶段性演进架构)
 ```
 strategies/
-├── dca_free_v2.quant              # 🎯 Main DCA strategy (v2.2.0-Enhanced)
-├── dca_advanced_v2.quant          # 💎 Advanced DCA with 8-layer system  
-├── orders_his.csv                 # 📊 Historical orders data (251 days)
-├── dca-free_20250828121355.csv    # 📋 Backtest execution log
-├── README_three_tiers.md          # 📖 Three-tier system documentation
-├── strategy_v1/                   # 🗂️ Legacy V1 implementation
-├── strategy_v2/                   # 🗂️ Legacy V2 implementation  
-├── strategy_v3/                   # 🗂️ Legacy V3 implementation
-└── strategy_v3_1/                 # 🗂️ Legacy V3.1 implementation
+├── dca_free_stable.quant          # 🆓 免费稳定版 - 公开分发
+├── dca_premium_stable.quant       # 💎 付费稳定版 - 私有分发 (.gitignore保护)
+├── dca_free_v2.quant              # 🔧 混合开发版 - 开发调试用
+├── dca_advanced_v2.quant          # 👑 VIP原型版 - 未来APP参考
+├── README.md                      # 📖 策略架构和维护说明
+├── orders_his.csv                 # 📊 历史订单数据 (251天)
+├── dca-free_20250828121355.csv    # 📋 回测执行日志
+├── strategy_v1/                   # 🗂️ 历史版本 V1
+├── strategy_v2/                   # 🗂️ 历史版本 V2
+├── strategy_v3/                   # 🗂️ 历史版本 V3
+└── strategy_v3_1/                 # 🗂️ 历史版本 V3.1
 ```
 
 ### `/tools/` - Development & Analysis Tools  
@@ -55,19 +57,20 @@ docs/
 └── Moomoo量化功能中常用的API函数及其用法.txt # 🔧 API reference
 ```
 
-## 🎯 Current Status (v2.2.0-Enhanced)
+## 🎯 Current Status (阶段性演进架构)
 
-### ✅ Completed Features
-- **Tiered Strategy System**: Free (weekly) vs Paid (daily) intervals
-- **Custom Balance Control**: System default vs user-defined (10K-500K)
-- **Smart Position Sizing**: 3-layer drawdown protection with multipliers
-- **Performance Validation**: Data-driven commercial value proposition
-- **Comprehensive Testing**: 251-day historical backtesting
+### ✅ 已完成功能
+- **双版本稳定架构**: 免费版(每周) vs 付费版(每日+智能加仓)
+- **商业模式保护**: .gitignore保护付费版，分发渠道分离
+- **性能数据验证**: 251天真实市场数据验证+4.1%收益优势
+- **用户体验优化**: 简化参数，专注稳定性和易用性
+- **技术支持体系**: 免费版社区支持，付费版专属服务
 
-### 📊 Key Performance Metrics  
-- **Daily DCA vs Weekly DCA**: +4.1% return advantage (18.2% vs 14.1%)
-- **Average Cost Efficiency**: $529.60 vs $548.73 per share
-- **Commercial ROI**: 5800%+ (¥35/month fee vs $2,050 additional gains)
+### 📊 核心性能指标  
+- **每日定投 vs 每周定投**: +4.1%收益优势 (18.2% vs 14.1%)
+- **平均成本效率**: $529.60 vs $548.73 每股
+- **商业投资回报**: 5800%+ (¥35/月费用 vs $2,050额外收益)
+- **架构稳定性**: 双文件维护，bug同步机制
 
 ## 🔒 Security & Privacy
 

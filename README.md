@@ -54,35 +54,36 @@ This project provides an enhanced DCA investment strategy that solves common pai
 
 ## 🚀 Quick Start
 
-### 1. Choose Your Tier
+### 1. Choose Your Version
 
-#### 🆓 Free Tier
+#### 🆓 免费稳定版 (推荐新手)
 ```python
-version_tier = 1          # Free version
-interval_mode = 1         # Weekly intervals (auto)
-balance_mode = 1          # System default balance
+# 使用 strategies/dca_free_stable.quant
+qty = 20                  # 定投股数 (10-50，10的倍数)
+conservative_mode = False # 保守模式 (强制10股)
+enable_risk_alerts = True # 风险提醒开关
 ```
-- Weekly DCA intervals
-- Basic drawdown monitoring  
-- Risk alerts and notifications
+- **固定特性**: 每周定投，基础风险提醒
+- **适合人群**: 新手用户，稳健投资者
+- **获取方式**: GitHub公开下载
 
-#### 💎 Paid Tier (¥35/month)
+#### 💎 付费稳定版 (¥35/月)
 ```python
-version_tier = 2          # Paid version  
-interval_mode = 2         # Daily intervals
-balance_mode = 2          # Custom balance
-custom_balance = 50000    # 10K-500K range
+# 使用 strategies/dca_premium_stable.quant (私有获取)
+qty = 20                  # 定投股数 (灵活配置)
+custom_balance = 50000    # 自定义资金 (10K-500K)
+interval_mode = 2         # 1=每日 2=每日(推荐) 3=每周
+enable_smart_sizing = True # 3层智能加仓
 ```
-- Daily DCA intervals (+4.1% performance)
-- Smart 3-layer position sizing
-- Custom balance control
-- Advanced parameter optimization
+- **核心优势**: 每日定投+智能加仓 (+4.1%收益)
+- **适合人群**: 有经验投资者，追求收益优化
+- **获取方式**: 联系作者私有分发
 
-### 2. Deploy to Moomoo Platform
-1. Copy `strategies/dca_free_v2.quant` to Moomoo
-2. Configure your desired tier and parameters
-3. Set investment symbol (e.g., SPY)
-4. Start backtesting or live trading
+### 2. 部署到Moomoo平台
+1. 根据需求选择对应策略文件
+2. 导入到Moomoo量化交易平台
+3. 设置投资标的 (如SPY)
+4. 开始回测或实盘交易
 
 ## 📊 Strategy Logic
 

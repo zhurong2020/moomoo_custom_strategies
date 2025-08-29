@@ -76,26 +76,19 @@ class Strategy(StrategyBase):
     def global_variables(self):
         """全局变量设置 - 分层版"""
         try:
-            # 版本层级选择 (核心功能)
-            self.version_tier = show_variable(1, GlobalType.INT)  # 1=免费版 2=付费版(¥35/月)
-            
-            # 资金管理 (分层功能)
-            self.balance_mode = show_variable(1, GlobalType.INT)  # 1=系统默认 2=自定义(付费版)
-            self.custom_balance = show_variable(50000, GlobalType.INT)  # 付费版可自定义资金
-            
-            # 投资周期 (分层功能)  
-            self.interval_mode = show_variable(1, GlobalType.INT)  # 1=自动(版本决定) 2=每日(付费版) 3=每周 4=自定义(付费版)
-            self.custom_interval_min = show_variable(1440, GlobalType.INT)  # 自定义周期(付费版)
-            
-            # 预设模板选择
-            self.preset_mode = show_variable(2, GlobalType.INT)  # 1=保守 2=平衡 3=积极
-            
-            # 基础参数
+            # === 免费版基础参数 (用户主要配置) ===
             self.qty = show_variable(20, GlobalType.INT)  # 每次定投股数
-            
-            # 功能开关
+            self.preset_mode = show_variable(2, GlobalType.INT)  # 1=保守 2=平衡 3=积极
             self.backtest = show_variable(True, GlobalType.BOOL)  # 回测模式
             self.basic_invest_only = show_variable(False, GlobalType.BOOL)  # 仅定投模式
+            
+            # === 付费版专属功能 (¥35/月) ===
+            print("\n💡 以下为付费版(¥35/月)专属功能，免费版用户修改无效:")
+            self.version_tier = show_variable(1, GlobalType.INT)  # 1=免费版 2=付费版(¥35/月)
+            self.balance_mode = show_variable(1, GlobalType.INT)  # 1=系统默认 2=自定义(付费版)
+            self.custom_balance = show_variable(50000, GlobalType.INT)  # 付费版可自定义资金
+            self.interval_mode = show_variable(1, GlobalType.INT)  # 1=自动(版本决定) 2=每日(付费版) 3=每周 4=自定义(付费版)
+            self.custom_interval_min = show_variable(1440, GlobalType.INT)  # 自定义周期(付费版)
             
             # 免费版固定参数（不可配置）
             self.drawdown_layers = [5.0, 10.0, 20.0]  # 3层回撤阈值
