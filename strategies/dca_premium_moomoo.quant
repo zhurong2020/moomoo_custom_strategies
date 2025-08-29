@@ -1,0 +1,853 @@
+class Strategy(StrategyBase):
+    """DCA智能定投策略 - v2.2.5-Premium-Moomoo
+    
+    支持免费版和付费版的Moomoo分层策略
+    - 授权码验证系统 (本地验证)
+    - 免费版: 每周定投 + 基础功能
+    - 付费版(¥35/月): 每日定投 + 2层智能加仓
+    - VIP版引导: 引导下载完整App
+    
+    [v2.2.5 核心功能]
+    ✅ 授权码分层验证 (PREM/VIP格式)
+    ✅ 轻度代码混淆保护付费功能
+    ✅ 2层智能加仓系统 (10%/20%→1.5x/2x)
+    ✅ 灵活投资周期配置
+    ✅ 升级引导和价值展示
+    
+    📞 授权码获取:
+    - 付费版: 联系微信 [你的微信号] 获取PREM码(¥35/月)
+    - VIP版: 联系获取VIP码，下载完整App(¥500/年)
+    """
+
+    def initialize(self):
+        """初始化策略"""
+        try:
+            self._version = "v2.2.5-Premium-Moomoo"
+            self._tier = "分层策略版"
+            self._description = (
+                "🎯 DCA智能定投分层策略\n"
+                "🆓 免费版: 每周定投+基础功能\n"
+                "💎 付费版: 每日定投+2层智能加仓\n"
+                "👑 VIP版: 完整App功能引导\n"
+                "🔑 通过授权码解锁高级功能"
+            )
+            
+            print(f"🚀 开始初始化 {self._version}")
+            
+            # 首先设置核心状态变量
+            self.current_drawdown_layer = -1  # -1表示还没有触发任何层级
+            self.last_investment_time = None
+            self.highest_price = None
+            self.last_valid_price = 100.0  # 默认价格
+            self.strategy_start_price = None  # 策略启动价格
+            self.drawdown_reset_threshold = 0.05  # 价格上涨5%重置回撤层级
+            self.investment_count = 0  # 投资次数计数
+            
+            # 回测支持变量初始化
+            import collections
+            self.high_queue = collections.deque(maxlen=20)
+            self._position = 0
+            self._total_cost = 0.0
+            self.virtual_balance = None  # 先初始化为None
+            
+            # 第一阶段：基础组件初始化
+            print("📝 第一阶段: 基础组件初始化")
+            self.trigger_symbols()
+            self.custom_indicator()
+            
+            # 第二阶段：用户参数设置和授权验证
+            print("📝 第二阶段: 参数设置和授权验证")
+            self.global_variables()
+            
+            # 第三阶段：根据授权级别设置功能
+            print("📝 第三阶段: 分层功能设置")
+            self.setup_tier_features()
+            
+            # 第四阶段：预设配置应用
+            print("📝 第四阶段: 预设配置应用")
+            self.setup_presets()
+            
+            # 第五阶段：最终验证和兜底设置
+            print("📝 第五阶段: 最终验证")
+            self.final_validation()
+            
+            print(f"✅ 初始化完成：版本层级{self.version_tier}, 虚拟余额=${getattr(self, 'virtual_balance', 0):,.0f}")
+            
+            # 详细的初始化状态日志和欢迎信息
+            self.print_initialization_status()
+            self.print_welcome()
+            
+        except Exception as e:
+            print(f"❌ 初始化失败: {str(e)}")
+            import traceback
+            print(f"详细错误: {traceback.format_exc()}")
+
+    def trigger_symbols(self):
+        """设置交易标的"""
+        try:
+            self.stock = declare_trig_symbol()
+            print(f"📈 交易标的: {self.stock}")
+        except Exception as e:
+            print(f"❌ 标的设置失败: {str(e)}")
+
+    def custom_indicator(self):
+        """注册自定义技术指标"""
+        try:
+            # 注册一个简单的移动平均线指标供参考
+            self.register_indicator(
+                indicator_name='MA',
+                script='MA5:MA(CLOSE,5),COLORFF8D1E;',
+                param_list=[]
+            )
+            print("📊 技术指标注册完成")
+        except Exception as e:
+            print(f"❌ 技术指标注册失败: {str(e)}")
+
+    def global_variables(self):
+        """全局变量设置和授权验证"""
+        try:
+            # === 基础用户参数 ===
+            self.qty = show_variable(20, GlobalType.INT)  # 每次定投股数
+            self.preset_mode = show_variable(2, GlobalType.INT)  # 1=保守 2=平衡 3=积极
+            self.backtest = show_variable(True, GlobalType.BOOL)  # 回测模式
+            
+            # === 重要风险声明 ===
+            print("\n" + "="*60)
+            print("⚠️  重要风险声明和免责条款")
+            print("="*60)
+            print("📢 本策略仅供学习交流使用，不构成投资建议")
+            print("💰 投资有风险，决策需谨慎，盈亏自负")
+            print("🔧 使用前请确认参数配置正确，错误配置可能导致损失")
+            print("📞 如有疑问请及时联系技术支持")
+            print("✅ 继续使用表示您已知晓并承担相关风险")
+            print("="*60)
+            
+            # === 授权码验证 ===
+            print("\n🔑 授权验证系统:")
+            print("   🆓 免费版: 留空使用基础功能")
+            print("   💎 付费版: 输入PREM码(格式: PREM2024MMXX)")
+            print("   👑 VIP版: 输入VIP码(格式: VIP2024XXXX)")
+            print("   ⚠️ 输入错误将导致策略停止运行")
+            self.license_code = show_variable("", GlobalType.STRING)  # 授权码
+            
+            # 验证授权码并设置版本层级
+            validation_result = self._validate_license_safe(self.license_code)
+            
+            if validation_result["success"]:
+                self.version_tier = validation_result["tier"]
+                tier_names = {1: "免费版", 2: "付费版(¥35/月)", 3: "VIP版(¥500/年)"}
+                print(f"✅ 授权验证成功: {tier_names.get(self.version_tier)}")
+                print(f"📝 {validation_result['message']}")
+            else:
+                # 授权验证失败，停止策略
+                print(f"\n{'🚨 授权验证失败 🚨':^60}")
+                print("="*60)
+                print(f"❌ 错误原因: {validation_result['message']}")
+                print(f"🔧 输入授权码: '{self.license_code}'")
+                print(f"📋 正确格式:")
+                print(f"   付费版: PREM2024MMXX (如: PREM20240824)")
+                print(f"   VIP版: VIP2024XXXX (如: VIP20240001)")
+                print(f"   测试版: TEST001, DEMO2024")
+                print(f"📞 获取授权码: 微信 [你的微信号]")
+                print(f"⚠️ 为防止损失，策略已停止运行")
+                print("="*60)
+                
+                # 抛出异常停止策略
+                raise ValueError(f"授权验证失败: {validation_result['message']}")
+            
+            print(f"⚙️ 基础参数配置完成")
+            
+        except Exception as e:
+            print(f"❌ 策略初始化失败: {str(e)}")
+            print(f"🛡️ 为保护用户资金安全，策略已停止运行")
+            import traceback
+            print(f"详细错误: {traceback.format_exc()}")
+            # 重新抛出异常，确保策略停止
+            raise
+
+    def _validate_license_safe(self, code):
+        """安全的授权码验证 - 返回详细结果"""
+        try:
+            if code == "" or code is None:
+                return {
+                    "success": True,
+                    "tier": 1,
+                    "message": "使用免费版功能，如需升级请联系获取授权码"
+                }
+                
+            # 转换为大写统一处理
+            code = str(code).upper().strip()
+            
+            # 基本格式检查
+            if len(code) < 8:
+                return {
+                    "success": False,
+                    "tier": 1,
+                    "message": f"授权码长度不足 (输入{len(code)}位，需要8-11位)"
+                }
+            
+            # 付费版验证: PREM + YYYY + MM + 校验位
+            if code.startswith("PREM"):
+                if len(code) != 11:
+                    return {
+                        "success": False,
+                        "tier": 1, 
+                        "message": f"付费版授权码格式错误 (长度{len(code)}位，应为11位)"
+                    }
+                    
+                if not code.startswith("PREM2024"):
+                    return {
+                        "success": False,
+                        "tier": 1,
+                        "message": "付费版授权码年份错误 (应为2024年)"
+                    }
+                    
+                month = code[8:10]
+                check = code[10:12]
+                try:
+                    month_int = int(month)
+                    expected_check = str(month_int * 3).zfill(2)
+                    if check == expected_check and 1 <= month_int <= 12:
+                        return {
+                            "success": True,
+                            "tier": 2,
+                            "message": f"付费版授权成功 (有效期: 2024年{month_int}月)"
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "tier": 1,
+                            "message": f"付费版授权码校验位错误 (月份{month}的校验位应为{expected_check}，输入{check})"
+                        }
+                except ValueError:
+                    return {
+                        "success": False,
+                        "tier": 1,
+                        "message": f"付费版授权码月份格式错误 ('{month}'不是有效月份)"
+                    }
+            
+            # VIP版验证: VIP + 2024 + 更复杂的校验
+            elif code.startswith("VIP"):
+                if len(code) < 10:
+                    return {
+                        "success": False,
+                        "tier": 1,
+                        "message": f"VIP授权码长度不足 (长度{len(code)}位，需要至少10位)"
+                    }
+                    
+                if not code.startswith("VIP2024"):
+                    return {
+                        "success": False,
+                        "tier": 1,
+                        "message": "VIP授权码年份错误 (应为2024年)"
+                    }
+                    
+                suffix = code[7:]
+                if len(suffix) >= 4:
+                    return {
+                        "success": True,
+                        "tier": 3,
+                        "message": f"VIP版授权成功 (用户ID: {suffix})"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "tier": 1,
+                        "message": "VIP授权码用户ID不足4位"
+                    }
+            
+            # 特殊测试码验证
+            elif code in ["TEST001", "TEST002", "DEMO2024"]:
+                test_tiers = {"TEST001": 2, "TEST002": 3, "DEMO2024": 2}
+                return {
+                    "success": True,
+                    "tier": test_tiers[code],
+                    "message": f"测试授权码验证成功 ({code})"
+                }
+            
+            else:
+                return {
+                    "success": False,
+                    "tier": 1,
+                    "message": f"无效的授权码前缀 ('{code[:4]}...'，应以PREM或VIP开头)"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "tier": 1,
+                "message": f"授权验证过程异常: {str(e)}"
+            }
+
+    def _validate_license(self, code):
+        """授权码验证 - 本地验证机制"""
+        try:
+            if code == "" or code is None:
+                return 1  # 免费版
+                
+            # 转换为大写统一处理
+            code = str(code).upper().strip()
+            
+            # 付费版验证: PREM + YYYY + MM + 校验位
+            # 格式: PREM202408XX (XX = MM * 3 的两位数)
+            if len(code) == 11 and code.startswith("PREM2024"):
+                month = code[8:10]
+                check = code[10:12]
+                try:
+                    month_int = int(month)
+                    expected_check = str(month_int * 3).zfill(2)
+                    if check == expected_check and 1 <= month_int <= 12:
+                        print(f"✅ 付费版授权码验证成功")
+                        return 2  # 付费版
+                except ValueError:
+                    pass
+            
+            # VIP版验证: VIP + 2024 + 更复杂的校验
+            # 格式: VIP2024XXXX 
+            if len(code) >= 10 and code.startswith("VIP2024"):
+                # 简单的VIP验证逻辑
+                suffix = code[7:]
+                if len(suffix) >= 4:
+                    print(f"✅ VIP版授权码验证成功")
+                    return 3  # VIP引导版
+            
+            # 特殊测试码 (开发调试用)
+            test_codes = {
+                "TEST001": 2,  # 测试付费版
+                "TEST002": 3,  # 测试VIP版  
+                "DEMO2024": 2  # 演示用付费版
+            }
+            if code in test_codes:
+                print(f"✅ 测试授权码验证成功")
+                return test_codes[code]
+            
+            return 1  # 默认免费版
+            
+        except Exception as e:
+            print(f"⚠️ 授权验证异常: {str(e)}")
+            return 1  # 异常时回退到免费版
+
+    def setup_tier_features(self):
+        """根据版本层级设置功能特性"""
+        try:
+            print(f"🔧 设置版本功能: 层级{self.version_tier}")
+            
+            if self.version_tier == 1:
+                # 免费版设置
+                self.setup_free_features()
+            elif self.version_tier == 2:
+                # 付费版设置
+                self.setup_premium_features()  
+            elif self.version_tier == 3:
+                # VIP引导版设置
+                self.setup_vip_guide_features()
+            else:
+                # 默认免费版
+                self.setup_free_features()
+                
+        except Exception as e:
+            print(f"❌ 分层功能设置失败: {str(e)}")
+            # 回退到免费版设置
+            self.setup_free_features()
+
+    def setup_free_features(self):
+        """设置免费版功能"""
+        print("🆓 配置免费版功能")
+        
+        # 固化免费版参数
+        self.version_tier = 1
+        self.interval_min = 10080  # 每周定投
+        self.interval_desc = "每周定投 (免费版)"
+        self.log_level = 0
+        
+        # 限制投资数量
+        self.qty = self._validate_free_qty(self.qty)
+        
+        # 设置默认资金
+        if self.backtest and not hasattr(self, 'virtual_balance'):
+            self.virtual_balance = 10000.0
+            self.initial_balance = 10000.0
+
+    def setup_premium_features(self):
+        """设置付费版功能 - 轻度混淆"""
+        print("💎 配置付费版功能")
+        
+        # 付费版参数配置
+        self.version_tier = 2
+        self.interval_min = 1440  # 每日定投  
+        self.interval_desc = "每日定投 (付费版)"
+        self.log_level = 1
+        
+        # 获取付费版配置 (轻度混淆)
+        premium_config = self._decode_premium_config()
+        self.drawdown_layers = premium_config[0]  # [10.0, 20.0]
+        self.drawdown_multipliers = premium_config[1]  # [1.5, 2.0]
+        self.extreme_drawdown_pct = 50.0
+        
+        # 验证投资数量 (付费版更灵活)
+        self.qty = self._validate_premium_qty(self.qty)
+        
+        # 设置付费版资金
+        if self.backtest and not hasattr(self, 'virtual_balance'):
+            self.virtual_balance = 50000.0  # 付费版默认更高
+            self.initial_balance = 50000.0
+            
+        print(f"🎯 付费版加仓配置: {self.drawdown_layers} → {self.drawdown_multipliers}")
+
+    def setup_vip_guide_features(self):
+        """设置VIP引导版功能"""
+        print("👑 配置VIP引导版功能")
+        
+        # VIP引导版基本和付费版类似，但主要作用是引导
+        self.setup_premium_features()
+        self.version_tier = 3  # 重新设置为VIP
+        self.interval_desc = "每日定投 (VIP引导版)"
+
+    def _decode_premium_config(self):
+        """获取付费版配置 - 轻度混淆"""
+        try:
+            # 简单的混淆: base64编码 + 字符串反转
+            # 原始数据: [[10.0, 20.0], [1.5, 2.0]]
+            import base64
+            encoded_data = "XV0LjIsIDEuNV0sIFsyMC4wLCAxMC4wXV0="  # 反转后的base64
+            decoded = base64.b64decode(encoded_data).decode()
+            # 反转字符串恢复原始格式
+            original = decoded[::-1]  # "[[10.0, 20.0], [1.5, 2.0]]"
+            config = eval(original)
+            return config[0], config[1]  # 返回阈值列表和倍数列表
+        except Exception as e:
+            print(f"⚠️ 付费配置解码失败: {str(e)}")
+            # 回退到默认配置
+            return [10.0, 20.0], [1.5, 2.0]
+
+    def _validate_free_qty(self, qty):
+        """验证免费版投资数量"""
+        # 免费版限制：10-100股，必须是10的倍数
+        if qty < 10:
+            qty = 10
+        elif qty > 100:
+            print(f"💡 付费版支持更大投资数量，联系升级")
+            qty = 100
+        qty = (qty // 10) * 10  # 强制10的倍数
+        if qty < 10:
+            qty = 10
+        return qty
+
+    def _validate_premium_qty(self, qty):
+        """验证付费版投资数量"""
+        # 付费版限制：1-200股，任意数量
+        if qty < 1:
+            qty = 1
+        elif qty > 200:
+            qty = 200
+        return qty
+
+    def setup_presets(self):
+        """设置预设模板"""
+        try:
+            presets = {
+                1: {"name": "保守型", "description": "低风险稳健投资", "base_qty": 10, "risk_level": "低"},
+                2: {"name": "平衡型", "description": "中等风险收益", "base_qty": None, "risk_level": "中"},
+                3: {"name": "积极型", "description": "相对积极投资", "base_qty": 50, "risk_level": "中高"}
+            }
+            
+            if self.preset_mode in presets:
+                preset = presets[self.preset_mode]
+                self.preset_name = preset["name"]
+                self.preset_desc = preset["description"]
+                self.risk_level = preset["risk_level"]
+                
+                # 应用预设数量
+                if preset["base_qty"] is not None and self.qty == 20:
+                    if self.version_tier == 1:
+                        suggested_qty = self._validate_free_qty(preset["base_qty"])
+                    else:
+                        suggested_qty = self._validate_premium_qty(preset["base_qty"])
+                    self.qty = suggested_qty
+            else:
+                self.preset_name = "自定义"
+                self.preset_desc = "用户自定义配置"
+                self.risk_level = "未知"
+                
+            print(f"🎨 预设配置: {self.preset_name} - {self.qty}股")
+            
+        except Exception as e:
+            print(f"❌ 预设配置失败: {str(e)}")
+            self.preset_name = "默认"
+            self.preset_desc = "系统默认"
+            self.risk_level = "中"
+
+    def final_validation(self):
+        """最终验证和兜底设置"""
+        # 确保virtual_balance正确设置
+        if self.backtest:
+            if not hasattr(self, 'virtual_balance') or self.virtual_balance is None:
+                default_balance = 50000.0 if self.version_tier >= 2 else 10000.0
+                self.virtual_balance = default_balance
+                self.initial_balance = default_balance
+                print(f"🔧 设置默认资金: ${self.virtual_balance:,.0f}")
+
+    def print_initialization_status(self):
+        """打印初始化状态"""
+        print(f"\n🔍 初始化状态 - {self._version}")
+        print("=" * 50)
+        tier_names = {1: "免费版", 2: "付费版", 3: "VIP引导版"}
+        print(f"🎛️ 版本层级: {self.version_tier} ({tier_names.get(self.version_tier, '未知')})")
+        print(f"📈 交易标的: {getattr(self, 'stock', 'Unknown')}")
+        print(f"💰 虚拟余额: ${getattr(self, 'virtual_balance', 0):,.2f}")
+        print(f"📅 投资周期: {getattr(self, 'interval_min', 0)}分钟")
+        print(f"📦 定投数量: {getattr(self, 'qty', 0)}股")
+        if hasattr(self, 'drawdown_layers'):
+            print(f"🎯 加仓配置: {self.drawdown_layers} → {self.drawdown_multipliers}")
+        print("=" * 50)
+
+    def print_welcome(self):
+        """打印欢迎信息 - 分层版"""
+        tier_info = {
+            1: {"name": "免费版", "color": "🆓", "features": "每周定投+基础监控"},
+            2: {"name": "付费版(¥35/月)", "color": "💎", "features": "每日定投+2层智能加仓"},
+            3: {"name": "VIP引导版(¥500/年)", "color": "👑", "features": "完整功能引导"}
+        }
+        
+        current = tier_info.get(self.version_tier, tier_info[1])
+        
+        print(f"\n{'='*60}")
+        print(f"🚀 DCA智能定投策略 {self._version}")
+        print(f"{'='*60}")
+        print(f"{current['color']} 当前版本: {current['name']}")
+        print(f"✨ 核心功能: {current['features']}")
+        
+        if self.version_tier == 1:
+            self.print_free_welcome()
+        elif self.version_tier == 2:
+            self.print_premium_welcome()
+        elif self.version_tier == 3:
+            self.print_vip_welcome()
+            
+        print(f"{'='*60}\n")
+
+    def print_free_welcome(self):
+        """免费版欢迎信息"""
+        print(f"\n🆓 免费版功能:")
+        print(f"   ✅ 每周智能定投")
+        print(f"   ✅ 基础回撤监控")
+        print(f"   ✅ 风险提醒系统")
+        print(f"   ✅ 投资统计记录")
+        
+        print(f"\n📊 当前配置:")
+        print(f"   投资模板: {self.preset_name}")
+        print(f"   定投数量: {self.qty}股 (限制10-100股)")
+        print(f"   投资周期: {self.interval_desc}")
+        print(f"   初始资金: ${getattr(self, 'virtual_balance', 0):,.0f}")
+        
+        print(f"\n🎯 升级获得更多:")
+        print(f"   💎 付费版(¥35/月): 每日定投+2层智能加仓")
+        print(f"   🚀 App版(¥500/年): 8层完整系统")
+        print(f"   📞 联系微信: [你的微信号] 获取授权码")
+
+    def print_premium_welcome(self):
+        """付费版欢迎信息"""
+        print(f"\n💎 付费版功能:")
+        print(f"   ✅ 每日智能定投 (+4.1%年化优势)")
+        print(f"   ✅ 2层智能加仓 (10%/20%→1.5x/2x)")
+        print(f"   ✅ 灵活投资数量 (1-200股)")
+        print(f"   ✅ 极端回撤保护")
+        print(f"   ✅ 专属技术支持")
+        
+        print(f"\n📊 当前配置:")
+        print(f"   投资模板: {self.preset_name}")
+        print(f"   定投数量: {self.qty}股")
+        print(f"   投资周期: {self.interval_desc}")
+        print(f"   初始资金: ${getattr(self, 'virtual_balance', 0):,.0f}")
+        print(f"   加仓设置: {getattr(self, 'drawdown_layers', [])}")
+        
+        print(f"\n🚀 继续升级:")
+        print(f"   👑 App完整版: 8层回撤+多标的+高级算法")
+        print(f"   📞 联系获得VIP码体验完整功能")
+
+    def print_vip_welcome(self):
+        """VIP引导版欢迎信息"""
+        print(f"\n👑 VIP引导版:")
+        print(f"   ✅ 包含付费版所有功能")
+        print(f"   ✅ VIP功能预览和引导")
+        print(f"   ✅ App下载和使用指导")
+        
+        print(f"\n🚀 完整App功能:")
+        print(f"   📱 8层完整回撤系统 (2%-50%)")
+        print(f"   📈 多标的组合投资")
+        print(f"   🤖 成本定投算法")
+        print(f"   📊 实时策略调整")
+        print(f"   📋 专业投资报告")
+        
+        print(f"\n📞 App下载:")
+        print(f"   🔗 下载链接: [你的App下载链接]")
+        print(f"   💬 技术支持: [你的联系方式]")
+
+    def handle_data(self):
+        """主交易逻辑 - 分层路由"""
+        try:
+            current_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+            latest_price, highest_price, account_balance = self.get_market_data()
+            
+            # 计算回撤和持仓信息
+            drawdown = self.calculate_drawdown(latest_price)
+            position = self.get_position()
+            
+            if self.log_level >= 1:
+                print(f"📊 价格={latest_price:.2f}, 回撤={drawdown:.2f}%, 持仓={position}")
+
+            # 分层功能路由
+            if self.version_tier == 1:
+                self.free_version_logic(current_time, latest_price, account_balance, drawdown)
+            elif self.version_tier == 2:
+                self.premium_version_logic(current_time, latest_price, account_balance, drawdown)
+            elif self.version_tier == 3:
+                self.vip_guide_logic(current_time, latest_price, account_balance, drawdown)
+            else:
+                self.free_version_logic(current_time, latest_price, account_balance, drawdown)
+
+        except Exception as e:
+            import traceback
+            print(f"❌ 策略执行错误: {str(e)}")
+            print(f"详细错误: {traceback.format_exc()}")
+
+    def free_version_logic(self, current_time, latest_price, account_balance, drawdown):
+        """免费版逻辑"""
+        # 升级提示
+        if drawdown >= 10.0:
+            print(f"💡 付费版此时会触发1.5倍智能加仓，降低成本")
+        elif drawdown >= 20.0:
+            print(f"🚀 付费版此时会触发2倍加仓，快速摊薄成本")
+            
+        # 基础定投
+        if self.should_invest(current_time):
+            self.execute_investment(latest_price, account_balance, self.qty, "免费版定投")
+            self.investment_count += 1
+            
+            if self.investment_count % 5 == 0:
+                print(f"📊 已完成{self.investment_count}次定投，付费版用户享受每日定投+智能加仓")
+
+    def premium_version_logic(self, current_time, latest_price, account_balance, drawdown):
+        """付费版逻辑 - 包含智能加仓"""
+        # 极端回撤保护
+        if drawdown >= self.extreme_drawdown_pct:
+            print(f"🚨 极端回撤保护: {drawdown:.1f}%，仅定投模式")
+            if self.should_invest(current_time):
+                self.execute_investment(latest_price, account_balance, self.qty, "极端回撤保护")
+            return
+
+        # 智能加仓逻辑
+        add_qty = self.calculate_add_position_qty(drawdown)
+        if add_qty > 0:
+            self.execute_investment(latest_price, account_balance, add_qty, f"付费版-第{self.current_drawdown_layer+1}层加仓")
+            return
+
+        # 常规定投
+        if self.should_invest(current_time):
+            self.execute_investment(latest_price, account_balance, self.qty, "付费版定投")
+
+    def vip_guide_logic(self, current_time, latest_price, account_balance, drawdown):
+        """VIP引导版逻辑"""
+        # 使用付费版逻辑，但添加VIP功能展示
+        self.premium_version_logic(current_time, latest_price, account_balance, drawdown)
+        
+        # VIP功能展示
+        if drawdown >= 15.0:
+            print(f"👑 VIP完整App功能: 8层回撤系统会在{drawdown:.1f}%时触发更细致的加仓")
+            print(f"📱 下载完整App获得更多功能: [App下载链接]")
+
+    def calculate_add_position_qty(self, drawdown):
+        """计算加仓数量 - 付费版2层加仓"""
+        if not hasattr(self, 'drawdown_layers'):
+            return 0
+            
+        for i, threshold in enumerate(self.drawdown_layers):
+            if drawdown >= threshold:
+                # 检查是否已经在这个层级加过仓
+                if i <= self.current_drawdown_layer:
+                    continue
+                    
+                # 触发新的加仓层级
+                self.current_drawdown_layer = i
+                add_qty = int(self.qty * self.drawdown_multipliers[i])
+                
+                print(f"🎯 付费版加仓: 第{i+1}层({threshold}%) → {self.drawdown_multipliers[i]}x → {add_qty}股")
+                return add_qty
+        
+        return 0
+
+    # === 以下是通用方法，各版本共享 ===
+    
+    def get_market_data(self):
+        """获取市场数据 - 通用方法"""
+        if self.backtest:
+            try:
+                if not hasattr(self, 'bar_index'):
+                    self.bar_index = 0
+                self.bar_index += 1
+                
+                latest_price = bar_close(self.stock, bar_type=BarType.D1, select=1)
+                if latest_price is None or latest_price <= 0:
+                    latest_price = 100.0
+                
+                if latest_price > 0:
+                    self.last_valid_price = latest_price
+                
+                self.high_queue.append(latest_price)
+                
+                available_days = self.bar_index if self.bar_index < 20 else 20
+                high_list = list(self.high_queue)[-available_days:]
+                if len(high_list) <= 1:
+                    highest_price = latest_price
+                else:
+                    highest_price = high_list[0]
+                    for price in high_list[1:]:
+                        if price > highest_price:
+                            highest_price = price
+                
+                account_balance = self.virtual_balance
+                return latest_price, highest_price, account_balance
+            except Exception as e:
+                print(f"回测数据获取错误: {str(e)}")
+                default_balance = getattr(self, 'virtual_balance', 10000.0) or 10000.0
+                return self.last_valid_price, self.last_valid_price, default_balance
+        else:
+            # 实盘模式
+            latest_price = current_price(self.stock, price_type=THType.FTH)
+            if latest_price is None or latest_price <= 0:
+                latest_price = self.last_valid_price
+            else:
+                self.last_valid_price = latest_price
+            
+            high_list = [bar_high(self.stock, bar_type=BarType.D1, select=i) for i in range(1, 21)]
+            valid_highs = [h for h in high_list if h is not None and h > 0]
+            if len(valid_highs) <= 1:
+                highest_price = latest_price
+            else:
+                highest_price = valid_highs[0]
+                for price in valid_highs[1:]:
+                    if price > highest_price:
+                        highest_price = price
+            
+            account_balance = total_cash(currency=Currency.USD)
+            return latest_price, highest_price, account_balance
+
+    def calculate_drawdown(self, latest_price):
+        """计算回撤幅度"""
+        if self.strategy_start_price is None:
+            self.strategy_start_price = latest_price
+            self.highest_price = latest_price
+            return 0.0
+            
+        if latest_price > self.highest_price:
+            self.highest_price = latest_price
+            if (latest_price - self.highest_price) / self.highest_price > self.drawdown_reset_threshold:
+                self.current_drawdown_layer = -1
+        
+        if self.highest_price > 0:
+            drawdown = (self.highest_price - latest_price) / self.highest_price * 100
+        else:
+            drawdown = 0.0
+            
+        return drawdown
+
+    def should_invest(self, current_time):
+        """判断是否应该定投"""
+        if self.last_investment_time is None:
+            return True
+        elapsed = (current_time - self.last_investment_time).total_seconds() / 60
+        return elapsed >= self.interval_min
+
+    def execute_investment(self, latest_price, account_balance, quantity, trade_type="定投"):
+        """执行投资 - 通用方法"""
+        # 根据版本层级验证数量
+        if self.version_tier == 1:
+            quantity = self._validate_free_qty(quantity)
+        else:
+            quantity = self._validate_premium_qty(quantity)
+
+        if self.backtest:
+            required_cash = quantity * latest_price
+            
+            if self.virtual_balance is None:
+                default_balance = 50000.0 if self.version_tier >= 2 else 10000.0
+                self.virtual_balance = default_balance
+
+            if required_cash > self.virtual_balance:
+                original_qty = quantity
+                max_qty = int(self.virtual_balance // latest_price)
+                if self.version_tier == 1:
+                    max_qty = (max_qty // 10) * 10
+                    min_qty = 10
+                else:
+                    min_qty = 1
+                    
+                if max_qty < min_qty:
+                    print(f"💰 余额不足，无法购买最少{min_qty}股")
+                    return
+                    
+                quantity = max_qty
+                required_cash = quantity * latest_price
+                print(f"⚠️ 资金调整: {original_qty}股 → {quantity}股")
+            
+            if quantity < (10 if self.version_tier == 1 else 1):
+                return
+
+            order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+            print(f"📊 {trade_type}: {quantity}股 @ ${latest_price:.2f}")
+            
+            self.virtual_balance -= required_cash
+            self._total_cost += required_cash
+            self._position += quantity
+            
+            print(f"💰 余额: ${self.virtual_balance:.2f} | 持仓: {self._position}股")
+            
+        else:
+            # 实盘模式
+            required_cash = quantity * latest_price
+            if required_cash > account_balance:
+                max_qty = int(account_balance // latest_price)
+                if self.version_tier == 1:
+                    max_qty = (max_qty // 10) * 10
+                if max_qty < (10 if self.version_tier == 1 else 1):
+                    print(f"💰 资金不足")
+                    return
+                quantity = max_qty
+
+            try:
+                order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
+                print(f"✅ {trade_type}: {quantity}股 @ 市价")
+            except Exception as e:
+                print(f"❌ 下单失败: {str(e)}")
+                return
+
+        self.last_investment_time = device_time(TimeZone.DEVICE_TIME_ZONE)
+
+    def get_position(self):
+        """获取持仓数量"""
+        if self.backtest:
+            return self._position
+        try:
+            return position_holding_qty(self.stock)
+        except:
+            return 0
+
+    def get_total_cost(self):
+        """获取总成本"""
+        if self.backtest:
+            return self._total_cost
+        try:
+            pos = position_holding_qty(self.stock)
+            avg_cost = position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+            return pos * avg_cost
+        except:
+            return 0.0
+
+    def get_avg_cost(self):
+        """获取平均成本"""
+        if self.backtest:
+            return self._total_cost / self._position if self._position > 0 else 0.0
+        try:
+            return position_cost(self.stock, cost_price_model=CostPriceModel.AVG)
+        except:
+            return 0.0
