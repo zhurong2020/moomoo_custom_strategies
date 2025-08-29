@@ -156,6 +156,7 @@ place_limit(symbol=Contract("US.AAPL"), price=mid_price(symbol=Contract("US.AAPL
 ```
 示例返回值：FT6644468615272262086
 
+
 14. place_stop_limit
 下止损限价单
 place_stop_limit(symbol, aux_price, price, qty, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
@@ -278,3 +279,109 @@ order_filled_qty(orderid="FH123456789")
 示例返回值
 100
 
+24.bar_high
+获取指定标的指定周期的 K 线最高价。
+bar_high(symbol, bar_type=BarType.H1, select=1)
+其中参数名为symbol，类型为Contract，bar_type指定BarType	K 线周期，比如BarType.H1，select	int为选取倒数第几根 K 线数据，比如1，范围1-500。返回类型： float。
+示例
+获取苹果的最新 1 根 1 小时 K 线的最高价。
+bar_high(symbol=Contract("US.AAPL"), bar_type=BarType.H1, select=1)
+示例返回值
+142.43
+
+25.bar_custom
+将指定周期的多根 K 线聚合成 1 根 K 线，例如：自定义“8 小时 K”周期，是指每 8 根 1 小时 K 线聚合成 1 根 “8 小时 K”。
+bar_custom(symbol, data_type=BarDataType.HIGH, custom_num=4, custom_type=CustomType.H1, select=1)
+其中参数名为symbol，类型为Contract，data_type指定BarDataType数据类型，比如BarDataType.CLOSE，custom_num为自定义根数，比如4，范围1-200，custom_type为CustomType自定义周期，比如CustomType.H1，select	int为选取倒数第几根 K 线数据，比如1，范围1-5。返回类型： float。
+示例
+获取苹果近 8 日的最高价。
+bar_custom(symbol=Contract("US.AAPL"), data_type=BarDataType.HIGH, custom_num=8, custom_type=CustomType.D1, select=1)
+示例返回值
+181.55
+
+26. place_market
+提交市价单
+place_market(symbol, qty, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
+place_limit(symbol, price, qty, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
+其中symbol类型为Contract，qty类型为float，表示市价单数量，side类型为OrderSide，表示交易方向，枚举值，BUY表示买入，SELL表示卖出。time_in_force类型为TimeInForce，表示订单期限，枚举值，DAY表示当日有效，GTC表示撤单前有效，数量自动向下调整到可交易数量
+。返回类型：str，表示订单ID。
+示例-下苹果的市价单：
+提交市价单，以市价为价格买 100 股苹果，该订单当日有效
+place_market(symbol=Contract("US.AAPL"), qty=100, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
+示例返回值
+"FT6644468615272262086"
+
+27. order_side
+接口说明
+查询订单交易方向。
+你可以通过以下 2 个函数获得订单 ID ：
+下单
+查询订单 ID
+order_side(orderid)
+参数
+参数名	类型	说明	默认值	范围
+orderid	string	订单 ID	--	--
+返回
+返回类型： OrderSide
+
+示例说明
+查询 ID 为“FH123456789”的订单的交易方向。
+order_side(orderid="FH123456789")
+示例返回值
+BUY
+
+28. position_side
+接口说明
+获取指定标的的持仓方向。
+适用市场
+香港市场：股票、ETFs、窝轮、牛熊证、界内证、期权、期货
+美国市场：股票、ETFs、期权、期货
+A股市场：股票、ETFs
+新加坡市场：期货
+日本市场：期货
+position_side(symbol)
+参数
+参数名	类型	说明	默认值	范围
+symbol	Contract	标的	--	--
+返回
+返回类型：PositionSide
+
+示例说明
+获取苹果的持仓方向。
+position_side(symbol=Contract("US.AAPL"))
+示例返回值
+LONG
+
+29. market_value_security
+接口说明
+获取当前账户的证券市值。
+证券市值：账户持仓中股票与证券衍生品的市值总和。
+market_value_security(currency=Currency.HKD)
+参数
+参数名	类型	说明	默认值	范围
+currency	Currency	计价货币	Currency.HKD	--
+返回
+返回类型： float
+
+示例说明
+获取当前账户的证券市值
+market_value_security(currency=Currency.HKD)
+示例返回值
+20000
+
+30. available_fund
+接口说明
+获取当前账户（以某个币种计价）的可用资金。
+可用资金 = 现金 + 未实现盈亏 - 持仓占用的初始保证金 - 冻结资金。
+available_fund(currency=Currency.HKD)
+参数
+参数名	类型	说明	默认值	范围
+currency	Currency	计价货币	Currency.HKD	--
+返回
+返回类型： float
+
+示例说明
+获取当前账户（以 HKD 计价）的可用资金。
+available_fund(currency=Currency.HKD)
+示例返回值
+10000
