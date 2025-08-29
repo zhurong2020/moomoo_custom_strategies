@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [混合开发版 v2.2.5-EnhancedParams] - 2025-08-29
+## [Current Release - v2.2.5-Stable] - 2025-08-29
 
 ### Enhanced (参数优化版本)
 - **参数类型修复：** 修复basic_invest_only布尔值类型处理，添加int→bool自动转换
@@ -54,7 +54,7 @@ All notable changes to this project will be documented in this file.
 - 免费版每周定投：正确执行20股×5次=100股定投
 - 商业功能分层：version_tier参数控制免费版/付费版功能正常
 
-*注：稳定版本(dca_free_stable.quant, dca_premium_stable.quant)待功能验证完成后统一同步更新*
+*注：当前架构为三文件分离：dca_free_public.quant（开源）、dca_premium_moomoo.quant（授权）、dca_dev_mixed.quant（开发）*
 
 ## [Documentation Update] - 2025-08-24
 ### Updated

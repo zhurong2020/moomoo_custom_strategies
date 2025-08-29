@@ -1,15 +1,15 @@
 # 策略文件说明
 
-## 🎯 当前策略架构 - 阶段性演进模式
+## 🎯 当前策略架构 - 三层安全架构 (v2.2.5-Stable)
 
-基于用户规模和技术成熟度，采用**双文件稳定版本**策略：
+基于严格验证的三文件分离架构，确保商业保护和功能完整性：
 
-### 📁 文件结构 (整理后)
+### 📁 文件结构 (当前)
 ```
 strategies/
-├── dca_free_stable.quant      # 🆓 免费稳定版 - 公开分发
-├── dca_premium_stable.quant   # 💎 付费稳定版 - 私有分发 (已保护)
-├── dca_free_v2.quant          # 🔧 混合开发版 - 仅开发使用
+├── dca_free_public.quant      # 🆓 免费版 - GitHub开源
+├── dca_premium_moomoo.quant   # 💎 付费版 - 授权码保护
+├── dca_dev_mixed.quant        # 🔧 开发版 - .gitignore保护
 ├── data/backtests/             # 📊 回测数据 (251天SPY数据)
 ├── archive/                    # 📦 存档文件
 │   ├── dca_vip_reference.quant # 👑 VIP版参考 (未来APP功能)
@@ -17,10 +17,10 @@ strategies/
 └── README.md                   # 📖 本文档
 ```
 
-## 🆓 免费稳定版 (`dca_free_stable.quant`)
+## 🆓 免费版 (`dca_free_public.quant`)
 
-**版本**: v1.0-Free-Stable  
-**目标**: 专注稳定性，积累用户基数
+**版本**: v2.2.5-Free-Public  
+**目标**: 完全开源，积累用户基数
 
 ### 核心特性
 - ✅ 每周固定定投 (经验证的稳定策略)
@@ -41,10 +41,10 @@ strategies/
 - 社区平台分享
 - 升级引导明确
 
-## 💎 付费稳定版 (`dca_premium_stable.quant`)
+## 💎 付费版 (`dca_premium_moomoo.quant`)
 
-**版本**: v1.0-Premium-Stable  
-**目标**: 功能稳定，服务付费用户
+**版本**: v2.2.5-Premium-Moomoo  
+**目标**: 授权验证，服务付费用户
 
 ### 核心特性
 - ✅ 每日智能定投 (+4.1%验证收益)
@@ -67,8 +67,8 @@ strategies/
 
 ## 🚀 演进路线图
 
-### 当前阶段 (2024 Q4 - 2025 Q2)
-**策略**: 双文件稳定维护
+### 当前阶段 (2025 Q3-Q4)
+**策略**: 三文件安全架构维护
 - 专注用户增长和反馈收集
 - 小版本bug修复和优化
 - 性能数据持续验证
@@ -91,8 +91,8 @@ strategies/
 ## 🛠️ 维护策略
 
 ### Bug修复同步机制
-1. 发现问题 → 在开发版(`dca_free_v2.quant`)测试修复
-2. 验证稳定 → 同步到稳定版本
+1. 发现问题 → 在开发版(`dca_dev_mixed.quant`)测试修复
+2. 验证稳定 → 同步到生产版本
 3. 手动检查 → 确保两版本功能一致性
 4. 用户通知 → 更新日志和升级提醒
 
