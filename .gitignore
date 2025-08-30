@@ -104,13 +104,23 @@ api_keys.txt
 debug_*
 test_personal_*
 
-# Commercial strategy files and paid tier code
-# Note: Some premium files are kept in repo for legitimate development purposes
-strategies/**/premium_v2*.quant
-strategies/**/paid_v2*.quant
-strategies/**/pro_v2*.quant
-strategies/**/vip_v2*.quant
-strategies/**/advanced_v2*.quant
+# Commercial strategy files and paid tier code - CRITICAL SECURITY
+# All premium/paid versions must be protected from public exposure
+strategies/**/premium_*.quant
+strategies/**/*premium*.quant
+strategies/**/paid_*.quant
+strategies/**/*paid*.quant
+strategies/**/pro_*.quant
+strategies/**/*pro*.quant
+strategies/**/vip_*.quant
+strategies/**/*vip*.quant
+strategies/**/advanced_*.quant
+strategies/**/*advanced*.quant
+
+# DCA Strategy Premium Files - EXPLICIT PROTECTION
+strategies/dca_strategy/dca_premium_*.quant
+strategies/dca_strategy/*premium*.quant
+strategies/dca_strategy/dca_paid_*.quant
 
 # Development and mixed versions in archive (contain full unrestricted code)
 strategies/archive/old_versions/*dev*.quant
@@ -139,8 +149,26 @@ tools/debug_*.py
 tools/*temp*.py
 tools/scratch_*.py
 
-# Data directory rules (updated for new structure)
+# Data directory rules - ENHANCED SECURITY PROTECTION
 data/temp_*/
 data/cache_*/
 data/*_temp.*
 data/debug_*
+
+# User backtest data - CRITICAL: May contain personal trading patterns
+data/backtests/
+data/user_backtests/
+data/trading_logs/
+
+# Personal user data and trading history - NEVER COMMIT
+data/user_data/
+data/personal_*/
+data/trading_history/
+data/account_*/
+data/*_personal.*
+data/*_trading.*
+
+# Sensitive validation and test reports - May expose strategy parameters
+data/validation_reports/*personal*
+data/*validation*personal*
+data/test_reports/*user*
