@@ -25,6 +25,10 @@ class Strategy(StrategyBase):
             self._total_cost = 0.0
             self.virtual_balance = None
             
+            # VIP推广控制变量
+            self._vip_promotion_shown = False
+            self._layer_promotion_shown = {}
+            
             # 初始化组件
             self.trigger_symbols()
             self.custom_indicator()
@@ -375,10 +379,10 @@ class Strategy(StrategyBase):
             
             drawdown = self.calculate_drawdown(latest_price)
             
-            # 添加调试信息
-            if hasattr(self, 'bar_index') and self.bar_index % 5 == 0:  # 每5个bar打印一次
-                print("📊 策略状态 - 时间: {0}, 价格: ${1:.2f}, 余额: ${2:.0f}, Bar: {3}".format(
-                    current_time.strftime("%Y/%m/%d"), latest_price, account_balance, self.bar_index))
+            # 添加调试信息（减少频率）
+            if hasattr(self, 'bar_index') and self.bar_index % 20 == 0:  # 每20个bar打印一次
+                print("📊 第{0}天 | 价格: ${1:.2f} | 余额: ${2:,.0f}".format(
+                    self.bar_index, latest_price, account_balance))
             
             # 分层功能路由
             if self.version_tier == 1:
@@ -554,15 +558,19 @@ class Strategy(StrategyBase):
                 # 激进抄底策略 - 选择最适合的层级
                 add_qty = int(self.effective_qty * self.drawdown_multipliers[i])
                 
-                print("🎯 回撤加仓触发: 第{0}层 ({1}%), 实际回撤{2:.1f}%, 数量={3}股".format(
+                print("📊 回撤加仓触发: 第{0}层 ({1}%), 实际回撤{2:.1f}%, 数量={3}股".format(
                     i+1, threshold, drawdown, add_qty))
-                print("💰 乘数详情: 基础{0}股 × {1:.1f}倍 = {2}股".format(
+                print("📈 乘数详情: 基础{0}股 × {1:.1f}倍 = {2}股".format(
                     self.effective_qty, self.drawdown_multipliers[i], add_qty))
                 
-                # 显示VIP功能引导
-                if i >= 1:  # 第2层及以上显示VIP升级提示
-                    print("💡 VIP版本提供11层成本定投算法，在{0:.1f}%回撤时有更精细的加仓策略".format(drawdown))
-                    print("👑 联系微信获取VIP完整版(¥500/年)，包含AI参数优化和多标的投资组合")
+                # VIP推广信息 - 每个层级只显示一次
+                layer_key = "layer_{0}".format(i+1)
+                if not self._vip_promotion_shown and layer_key not in self._layer_promotion_shown:
+                    self._layer_promotion_shown[layer_key] = True
+                    if i >= 2:  # 第3层及以上显示VIP推广
+                        print("💡 VIP版本提供11层成本定投算法，在{0:.1f}%回撤时有更精细的加仓策略".format(drawdown))
+                        print("📞 联系微信获取VIP完整版(¥500/年)，包含AI参数优化和多标的投资组合")
+                        self._vip_promotion_shown = True  # 全局标记，避免后续层级重复显示
                 
                 return add_qty
         
@@ -746,9 +754,13 @@ class Strategy(StrategyBase):
             order_id = place_market(self.stock, quantity, OrderSide.BUY, TimeInForce.DAY)
             
             if self.backtest:
-                print("📊 {0}: {1}股 @ ${2:.2f}".format(trade_type, quantity, latest_price))
+                # 简化回测输出
+                if "加仓" in trade_type:
+                    print("🔥 {0}: {1}股 @ ${2:.2f}".format(trade_type, quantity, latest_price))
+                else:
+                    print("📊 {0}: {1}股 @ ${2:.2f}".format(trade_type, quantity, latest_price))
             else:
-                print("✅ {0}订单: {1}股 @ 市价, 订单号: {2}".format(trade_type, quantity, order_id))
+                print("✅ {0}订单: {1}股 @ 市价, ID: {2}".format(trade_type, quantity, order_id))
             
             return True
             
@@ -762,7 +774,8 @@ class Strategy(StrategyBase):
             self.virtual_balance -= required_cash
             self._total_cost += required_cash
             self._position += quantity
-            print("💰 余额: ${0:.2f} | 持仓: {1}股".format(self.virtual_balance, self._position))
+            if hasattr(self, 'bar_index') and self.bar_index % 10 == 0:  # 每10个交易日打印一次
+                print("💰 余额: ${0:,.0f} | 持仓: {1}股".format(self.virtual_balance, self._position))
 
     def get_position(self):
         """获取持仓数量"""
