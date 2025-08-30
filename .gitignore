@@ -40,9 +40,8 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
-# Project-specific: ignore only raw data/outputs, not docs or code
-historical_orders/*.csv
-historical_orders/*.txt
+# Project-specific data files (keep structured data, ignore temporary files)
+# Note: Raw backtest data is kept for analysis, but temporary test files are ignored
 
 # Logs
 *.log
@@ -106,17 +105,16 @@ debug_*
 test_personal_*
 
 # Commercial strategy files and paid tier code
-strategies/*premium*.quant
-strategies/*paid*.quant
-strategies/*pro*.quant
-strategies/*vip*.quant
-strategies/dca_premium_v2.quant
-strategies/dca_advanced_v2.quant
+# Note: Some premium files are kept in repo for legitimate development purposes
+strategies/**/premium_v2*.quant
+strategies/**/paid_v2*.quant
+strategies/**/pro_v2*.quant
+strategies/**/vip_v2*.quant
+strategies/**/advanced_v2*.quant
 
-# Development and mixed versions (contain full code)
-strategies/dca_dev_mixed.quant
-strategies/*dev*.quant
-strategies/*mixed*.quant
+# Development and mixed versions in archive (contain full unrestricted code)
+strategies/archive/old_versions/*dev*.quant
+strategies/archive/old_versions/*mixed*.quant
 
 # Paid tier documentation and specifications
 docs/*premium*.md
@@ -134,4 +132,15 @@ user_analytics/
 # Test-generated files and temporary data
 data/*test_report*.json
 data/tsla_price_*.csv
-tools/test_*.py
+
+# Test scripts (keep version testing tools, ignore only personal/debug files)
+tools/test_personal_*.py
+tools/debug_*.py
+tools/*temp*.py
+tools/scratch_*.py
+
+# Data directory rules (updated for new structure)
+data/temp_*/
+data/cache_*/
+data/*_temp.*
+data/debug_*
