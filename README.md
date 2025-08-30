@@ -3,7 +3,7 @@
 专为Moomoo平台设计的多元化量化交易系统，包含DCA定投、网格交易、期权策略等多种专业策略。
 
 [![验证状态](https://img.shields.io/badge/验证状态-100%25通过-brightgreen.svg)](./data/validation_reports/)
-[![当前版本](https://img.shields.io/badge/版本-v2.8.0--DataCollection-blue.svg)](./CLAUDE.md)
+[![当前版本](https://img.shields.io/badge/版本-v2.8.1--Enhanced-blue.svg)](./CLAUDE.md)
 [![开源协议](https://img.shields.io/badge/协议-Apache%202.0-orange.svg)](./LICENSE)
 
 ## ⚠️ Important Disclaimer | 免责声明
@@ -41,18 +41,19 @@ This project is for educational and research purposes only. Please be aware:
 本项目提供多元化的量化交易解决方案，涵盖不同的投资策略和风险偏好，为用户提供专业的量化交易工具。
 
 ### ✨ 系统特性
-- **📊 DCA定投**: 5层智能回撤保护，数据收集模式，分层商业体系
+- **📊 DCA定投**: 5层智能回撤保护，数据收集模式，**优化用户体验**
 - **🔲 网格交易**: 动态网格管理，金字塔加仓，高级风控系统
 - **🎰 期权策略**: 轮换期权(Wheel)策略，专业期权交易工具
 - **🔧 专业架构**: 功能分类清晰，便于维护和扩展
-- **⚡ 高性能**: 代码优化，数据收集，批量操作
+- **⚡ 高性能**: 代码优化，数据收集，**精简日志输出**
 - **📊 完整验证**: 多策略验证测试，功能完整性100%通过
+- **🛡️ 安全保护**: 敏感文件保护，用户数据安全
 
 ## 🏆 策略矩阵
 
 | 策略类型 | 主要特性 | 适用场景 | 状态 |
 |----------|----------|----------|----------|
-| **📊 DCA定投** | 5层智能加仓+数据收集 | 长期定投，看好优质资产 | **✅ v2.8.0** |
+| **📊 DCA定投** | 5层智能加仓+数据收集+日志优化 | 长期定投，看好优质资产 | **✅ v2.8.1** |
 | **🔲 网格交易** | 动态网格+金字塔加仓 | 震荡行情，双向获利 | **✅ v5.3.13** |
 | **🎰 轮换期权** | 卖Put+备兼看Call组合 | 获取权利金收入 | **🔧 开发中** |
 
@@ -84,6 +85,7 @@ data_collection_mode = 1         # 🆕 数据收集模式 (0=正常 1=纯投资
 ```
 - **完整功能**: **5层智能加仓系统** - 精准应对各种市场回撤
 - **🆕 数据收集模式**: 纯粹每日定投，无判断逻辑，快速获取历史数据
+- **🎯 用户体验优化**: 精简日志输出，避免重复推广信息
 - **激进模式**: 最高2.5x乘数，长期收益显著优于免费版
 - **无限制**: 无体验券限制，每次回撤都智能加仓
 - **获取方式**: 微信联系获取授权码
@@ -218,15 +220,17 @@ python -m py_compile strategies/dca_free_stable.quant
 ```
 moomoo_custom_strategies/
 ├── strategies/                    # 策略文件
-│   ├── dca_free_stable.quant        # 📚 主开发版 (v2.8.0)
-│   ├── dca_free_public.quant        # 🆓 免费版 (开源)
-│   ├── dca_premium_moomoo.quant     # 💎 付费版 (授权)
-│   └── dca_dev_mixed.quant          # 🔒 开发版 (.gitignore保护)
+│   ├── dca_strategy/               # DCA策略目录
+│   │   ├── dca_free_stable.quant     # 📚 主开发版 (v2.8.1)
+│   │   ├── dca_free_public.quant     # 🆓 免费版 (开源)
+│   │   └── dca_premium_*.quant       # 💎 付费版 (.gitignore保护)
+│   └── [其他策略目录...]             # 按策略类型分类
 ├── tools/                         # 开发工具
 │   ├── validate_both_versions.py    # 版本验证框架
 │   ├── test_v280_data_collection.py # v2.8.0数据收集测试
 │   └── test_v270_refactoring_validation.py # v2.7.0重构验证
 ├── data/                          # 数据报告
+│   ├── backtests/                   # 回测数据 (.gitignore保护)
 │   └── validation_reports/          # 验证结果
 ├── docs/                          # 文档资料  
 │   ├── STABLE_VERSION_SYNC_PLAN.md  # 版本同步计划
@@ -268,11 +272,13 @@ moomoo_custom_strategies/
 
 ## 🔐 安全与保护
 
-### 商业保护机制
+### 商业保护机制 (v2.8.1强化)
 - **免费版**: 完全开源，无商业代码泄露风险
-- **付费版**: 严格授权验证，错误时策略停止
-- **开发版**: .gitignore保护，防止意外泄露
+- **付费版**: 已从版本控制移除，严格本地保护
+- **用户数据**: 回测数据和交易记录完全保护
+- **敏感信息**: 全面.gitignore规则，防止意外泄露
 - **风险声明**: 完整免责条款，保护用户权益
+- **安全审计**: 定期检查确保无敏感信息暴露
 
 ### 开源信息  
 - 免费版策略代码和技术文档
@@ -327,4 +333,4 @@ moomoo_custom_strategies/
 [![联系付费版](https://img.shields.io/badge/联系-付费版-blue.svg)](mailto:your_email@example.com)
 [![查看验证](https://img.shields.io/badge/查看-验证报告-orange.svg)](./data/validation_reports/)
 
-*最后更新: 2025-08-30 | 版本: v2.8.0-DataCollection | 验证状态: ✅ 全部通过*
+*最后更新: 2025-08-30 | 版本: v2.8.1-Enhanced | 验证状态: ✅ 全部通过*
