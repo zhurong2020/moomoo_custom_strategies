@@ -1,10 +1,10 @@
 class Strategy(StrategyBase):
-    """DCA定投策略 - 统一开发版 v2.8.0"""
+    """DCA定投策略 - 统一开发版 v2.8.1"""
 
     def initialize(self):
         """初始化策略"""
         try:
-            self._version = "v2.8.0-MainDev"
+            self._version = "v2.8.1-MainDev"
             
             print("🚀 开始初始化 {0}".format(self._version))
             
